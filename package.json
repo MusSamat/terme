@@ -28,6 +28,8 @@
     "db:seed:demo": "tsx prisma/seedDemo.ts",
     "db:seed:test": "tsx prisma/seedTestUsers.ts",
     "db:seed:popular": "tsx prisma/seedPopularTrips.ts",
+    "db:seed:requests": "tsx prisma/seedPopularRequests.ts",
+    "db:seed:sights": "tsx prisma/seedPopularSights.ts",
     "dev:token": "tsx scripts/devToken.ts",
     "db:seed:cities": "tsx scripts/seed-cities.ts",
     "db:dedup-accounts": "tsx scripts/dedup-accounts.ts"
