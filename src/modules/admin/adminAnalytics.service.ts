@@ -14,6 +14,13 @@ export interface KpiCards {
   mau: number;                    // users seen in the last 30d
   cancellationRate7d: number | null; // cancelled / (cancelled + completed) × 100, trips 7d
   openRequests: number;           // open passenger requests right now
+  onlineNow: number;              // users seen in the last 60s (presence)
+  activeByPlatform: {             // DAU (24h) split by last presence platform
+    web: number;
+    mini: number;
+    mobile: number;
+    unknown: number;
+  };
 }
 
 export interface ChartResult {
@@ -29,8 +36,10 @@ export interface AdminAnalyticsService {
 export function createAdminAnalyticsService(prisma: PrismaClient): AdminAnalyticsService {
   async function kpi(): Promise<KpiCards> {
     const now = new Date();
+    const d1 = new Date(now.getTime() - 24 * 60 * 60_000);
     const d7 = new Date(now.getTime() - 7 * 24 * 60 * 60_000);
     const d30 = new Date(now.getTime() - 30 * 24 * 60 * 60_000);
+    const online60s = new Date(now.getTime() - 60_000);
 
     const [
       totalUsers,
@@ -49,6 +58,8 @@ export function createAdminAnalyticsService(prisma: PrismaClient): AdminAnalytic
       mau,
       cancelled7d,
       openRequests,
+      onlineNow,
+      activeByPlatformRows,
     ] = await Promise.all([
       prisma.user.count({ where: { deletedAt: null } }),
       prisma.user.count({ where: { deletedAt: null, createdAt: { gte: d7 } } }),
@@ -78,7 +89,22 @@ export function createAdminAnalyticsService(prisma: PrismaClient): AdminAnalytic
       prisma.user.count({ where: { deletedAt: null, lastSeenAt: { gte: d30 } } }),
       prisma.trip.count({ where: { status: 'cancelled', updatedAt: { gte: d7 } } }),
       prisma.passengerRequest.count({ where: { status: 'open', departureDate: { gte: now } } }),
+      prisma.user.count({ where: { deletedAt: null, lastSeenAt: { gte: online60s } } }),
+      prisma.user.groupBy({
+        by: ['lastPlatform'],
+        where: { deletedAt: null, lastSeenAt: { gte: d1 } },
+        _count: { _all: true },
+      }),
     ]);
+
+    const activeByPlatform = { web: 0, mini: 0, mobile: 0, unknown: 0 };
+    for (const row of activeByPlatformRows) {
+      const key =
+        row.lastPlatform === 'web' || row.lastPlatform === 'mini' || row.lastPlatform === 'mobile'
+          ? row.lastPlatform
+          : 'unknown';
+      activeByPlatform[key] += row._count._all;
+    }
 
     const totalDecisions = accepted7d + rejected7d;
     const acceptanceRate = totalDecisions === 0 ? null : (accepted7d / totalDecisions) * 100;
@@ -97,6 +123,8 @@ export function createAdminAnalyticsService(prisma: PrismaClient): AdminAnalytic
       mau,
       cancellationRate7d: cancellationRate === null ? null : Math.round(cancellationRate * 100) / 100,
       openRequests,
+      onlineNow,
+      activeByPlatform,
       avgDriverRating:
         avgDriver[0]?.avg === null || avgDriver[0]?.avg === undefined
           ? null

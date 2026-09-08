@@ -41,6 +41,7 @@ model User {
   loyaltyPoints    Int       @default(0) @map("loyalty_points")
   loyaltyTier      String    @default("novice") @map("loyalty_tier") @db.VarChar(20)
   lastSeenAt       DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  lastPlatform     String?   @map("last_platform") @db.VarChar(10) // web | mini | mobile — last presence ping origin
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
@@ -64,6 +65,7 @@ model User {
 
   @@index([deletedAt])
   @@index([language])
+  @@index([lastSeenAt]) // presence: online count = COUNT(last_seen_at >= now-60s)
   @@map("users")
 }
 

@@ -26,6 +26,7 @@ import { createNotificationsRouter } from '@/modules/notifications/notifications
 import { createComplaintsRouter } from '@/modules/complaints/complaints.routes.js';
 import { createLoyaltyRouter } from '@/modules/loyalty/loyalty.routes.js';
 import { createPassengerRequestsRouter } from '@/modules/passenger-requests/passenger-requests.routes.js';
+import { createPresenceRouter } from '@/modules/presence/presence.routes.js';
 import { NoopNotifier, type Notifier } from '@/lib/notifier.js';
 import type { TelegramSender } from '@/modules/auth/auth.otp.js';
 import { openapiDocument } from '@/openapi.js';
@@ -89,6 +90,7 @@ export function createApp(
   v1.use('/complaints', createComplaintsRouter(prisma, notifier));
   v1.use('/loyalty', createLoyaltyRouter(prisma, notifier));
   v1.use('/passenger-requests', createPassengerRequestsRouter(prisma, notifier));
+  v1.use('/presence', createPresenceRouter(prisma));
   v1.use('/admin', createAdminRouter(prisma, notifier, carCatalog));
   app.use('/v1', v1);
 
