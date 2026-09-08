@@ -130,7 +130,10 @@ const COMMENTS = [
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 const phoneFor = (i: number) => `${PHONE_PREFIX}${String(i).padStart(4, '0')}`;
-const plateFor = (i: number) => `01KGT${String(i).padStart(3, '0')}`;
+// 01KGS = «sights» plate namespace. Distinct from 01KGP (popular) and 01KGT
+// (test users, seedTestUsers.ts) — car_plate is globally UNIQUE, so seeds must
+// not share a prefix.
+const plateFor = (i: number) => `01KGS${String(i).padStart(3, '0')}`;
 
 /** Instant that reads as KG hour `h` on KG-day (today + dayOffset). */
 function kgDeparture(dayOffset: number, kgHour: number): Date {
