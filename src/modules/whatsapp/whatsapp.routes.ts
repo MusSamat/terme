@@ -7,22 +7,44 @@ import { ingestWebhook, type WaWebhookBody } from './whatsapp.service.js';
 
 // Meta signs every POST with HMAC-SHA256 over the raw body, sent as
 // `X-Hub-Signature-256: sha256=<hex>`. We compare against WHATSAPP_APP_SECRET.
-// Skipped when APP_SECRET is empty (initial dashboard testing before secrets
-// are wired) — logged so it's obvious the check is off.
-function verifySignature(req: Request): boolean {
+// The HMAC is computed over the RAW bytes captured in express.json's `verify`
+// hook (server.ts) — never over JSON.stringify(req.body), which would reorder
+// keys / change whitespace and never match.
+//
+// ⚠️ TEMPORARY DIAGNOSTIC MODE: on mismatch we LOG both signatures and proceed
+// (non-blocking) instead of returning 403, so no inbound messages are lost while
+// we debug. REVERT to blocking (see the POST handler) once the mismatch is
+// understood. Logs land in `pm2 logs terme-api`.
+function checkSignature(req: Request): boolean {
   if (!env.WHATSAPP_APP_SECRET) {
     logger.warn('whatsapp: WHATSAPP_APP_SECRET unset — skipping signature check');
     return true;
   }
   const header = req.get('x-hub-signature-256');
   const raw = (req as Request & { rawBody?: Buffer }).rawBody;
-  if (!header || !raw) return false;
+  const expected = raw
+    ? 'sha256=' + crypto.createHmac('sha256', env.WHATSAPP_APP_SECRET).update(raw).digest('hex')
+    : null;
 
-  const expected =
-    'sha256=' + crypto.createHmac('sha256', env.WHATSAPP_APP_SECRET).update(raw).digest('hex');
-  const a = Buffer.from(header);
-  const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  const ok =
+    !!header &&
+    !!expected &&
+    header.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(header), Buffer.from(expected));
+
+  if (!ok) {
+    logger.warn(
+      {
+        received: header ?? '(no header)',
+        expected: expected ?? '(no rawBody captured)',
+        hasRawBody: !!raw,
+        rawBodyPreview: raw ? raw.toString('utf8').slice(0, 200) : null,
+        appSecretLen: env.WHATSAPP_APP_SECRET.length,
+      },
+      'whatsapp: SIGNATURE MISMATCH (diagnostic — compare received vs expected)',
+    );
+  }
+  return ok;
 }
 
 export function createWhatsappRouter(prisma: PrismaClient): Router {
@@ -50,9 +72,12 @@ export function createWhatsappRouter(prisma: PrismaClient): Router {
   // POST — incoming messages + delivery-status updates. Reply 200 immediately
   // (Meta retries on any non-200 / slow response), then persist off the request.
   router.post('/webhook', (req, res) => {
-    if (!verifySignature(req)) {
-      res.sendStatus(403);
-      return;
+    const signatureOk = checkSignature(req);
+    // ⚠️ TEMPORARY: proceed even on a bad signature so we don't drop inbound
+    // traffic while debugging. To RESTORE security, replace the line below with:
+    //   if (!signatureOk) { res.sendStatus(403); return; }
+    if (!signatureOk) {
+      logger.warn('whatsapp: proceeding despite signature mismatch (TEMP non-blocking mode)');
     }
     res.sendStatus(200);
     void ingestWebhook(prisma, req.body as WaWebhookBody).catch((err) => {
