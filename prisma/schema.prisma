@@ -667,3 +667,38 @@ model TelegramBotLoginToken {
   @@index([telegramId])
   @@map("telegram_bot_login_tokens")
 }
+
+// ─── WhatsApp inbox (Cloud API) ───────────────────────────────────────
+// Minimal inbox over the WhatsApp Cloud API: one conversation per customer
+// phone number, an ordered message log per conversation. direction/status are
+// VARCHAR (not Prisma enums) to match this schema's enum-as-string convention.
+//   direction: INBOUND | OUTBOUND
+//   status:    SENT | DELIVERED | READ | FAILED  (OUTBOUND only; NULL otherwise)
+model WhatsappConversation {
+  id            String   @id @default(uuid()) @db.Uuid
+  phoneNumber   String   @unique @map("phone_number") @db.VarChar(20)
+  lastMessageAt DateTime @default(now()) @map("last_message_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  messages WhatsappMessage[]
+
+  @@index([lastMessageAt])
+  @@map("whatsapp_conversations")
+}
+
+model WhatsappMessage {
+  id                String   @id @default(uuid()) @db.Uuid
+  conversationId    String   @map("conversation_id") @db.Uuid
+  direction         String   @db.VarChar(10)
+  body              String   @db.Text
+  status            String?  @db.VarChar(10)
+  // wamid from Meta — unique so status updates match a row and redelivered
+  // inbound webhooks don't insert duplicates.
+  whatsappMessageId String?  @unique @map("whatsapp_message_id") @db.VarChar(128)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  conversation WhatsappConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@map("whatsapp_messages")
+}

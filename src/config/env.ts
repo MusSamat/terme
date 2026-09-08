@@ -52,6 +52,15 @@ const EnvSchema = z.object({
   GOOGLE_CLIENT_IDS: z.string().default('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'),
   APPLE_CLIENT_IDS: z.string().default(''),
 
+  // WhatsApp Cloud API (Meta). All optional/defaulted so a fresh checkout boots
+  // without them; the webhook GET rejects verification until VERIFY_TOKEN is set,
+  // and the reply endpoint 503s until ACCESS_TOKEN + PHONE_NUMBER_ID are set.
+  WHATSAPP_PHONE_NUMBER_ID: z.string().default(''),
+  WHATSAPP_ACCESS_TOKEN: z.string().default(''),
+  WHATSAPP_APP_SECRET: z.string().default(''),
+  WHATSAPP_VERIFY_TOKEN: z.string().default(''),
+  WHATSAPP_API_VERSION: z.string().default('v21.0'),
+
   SMS_PROVIDER: z.enum(['mock', 'mega', 'nikita']).default('mock'),
   SMS_API_URL: z.string().default(''),
   SMS_API_LOGIN: z.string().default(''),

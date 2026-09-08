@@ -17,6 +17,7 @@ export const ErrorCode = {
   OTP_TOO_MANY_ATTEMPTS: 'OTP_TOO_MANY_ATTEMPTS',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
+  WHATSAPP_WINDOW_EXPIRED: 'WHATSAPP_WINDOW_EXPIRED',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -37,6 +38,7 @@ const HTTP_STATUS: Record<ErrorCodeValue, number> = {
   OTP_TOO_MANY_ATTEMPTS: 429,
   INTERNAL_ERROR: 500,
   SERVICE_UNAVAILABLE: 503,
+  WHATSAPP_WINDOW_EXPIRED: 409,
 };
 
 export class AppError extends Error {
@@ -90,4 +92,6 @@ export const Errors = {
   otpTooManyAttempts: () => new AppError('OTP_TOO_MANY_ATTEMPTS', 'Too many OTP attempts'),
   internal: (msg = 'Internal server error') => new AppError('INTERNAL_ERROR', msg),
   serviceUnavailable: (msg = 'Service unavailable') => new AppError('SERVICE_UNAVAILABLE', msg),
+  whatsappWindowExpired: (details?: Record<string, unknown>) =>
+    new AppError('WHATSAPP_WINDOW_EXPIRED', '24-hour window expired, a template message is required', details),
 } as const;

@@ -45,6 +45,7 @@ import { createAdminCarCatalogService } from './adminCarCatalog.service.js';
 import { cursorArgs, sliceAndNext } from '@/lib/pagination.js';
 import type { Notifier } from '@/lib/notifier.js';
 import type { CarCatalogService } from '@/modules/cars/carCatalog.service.js';
+import { createWhatsappAdminRouter } from '@/modules/whatsapp/whatsapp.admin.routes.js';
 
 export function createAdminRouter(
   prisma: PrismaClient,
@@ -53,6 +54,9 @@ export function createAdminRouter(
 ): Router {
   const router = Router();
   router.use(requireAdmin);
+
+  // WhatsApp inbox admin API → /v1/admin/whatsapp/*
+  router.use('/whatsapp', createWhatsappAdminRouter(prisma));
 
   const verif = createAdminVerificationsService(prisma, notifier);
   const users = createAdminUsersService(prisma, notifier);

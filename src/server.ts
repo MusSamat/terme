@@ -27,6 +27,7 @@ import { createComplaintsRouter } from '@/modules/complaints/complaints.routes.j
 import { createLoyaltyRouter } from '@/modules/loyalty/loyalty.routes.js';
 import { createPassengerRequestsRouter } from '@/modules/passenger-requests/passenger-requests.routes.js';
 import { createPresenceRouter } from '@/modules/presence/presence.routes.js';
+import { createWhatsappRouter } from '@/modules/whatsapp/whatsapp.routes.js';
 import { NoopNotifier, type Notifier } from '@/lib/notifier.js';
 import type { TelegramSender } from '@/modules/auth/auth.otp.js';
 import { openapiDocument } from '@/openapi.js';
@@ -64,7 +65,16 @@ export function createApp(
       credentials: true,
     }),
   );
-  app.use(express.json({ limit: '1mb' }));
+  // Capture the raw body so the WhatsApp webhook can verify Meta's
+  // X-Hub-Signature-256 HMAC (computed over the exact received bytes).
+  app.use(
+    express.json({
+      limit: '1mb',
+      verify: (req, _res, buf) => {
+        (req as express.Request & { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
   app.use(express.urlencoded({ extended: false, limit: '1mb' }));
   app.use(requestContext);
   app.use(globalIpLimit);
@@ -91,6 +101,7 @@ export function createApp(
   v1.use('/loyalty', createLoyaltyRouter(prisma, notifier));
   v1.use('/passenger-requests', createPassengerRequestsRouter(prisma, notifier));
   v1.use('/presence', createPresenceRouter(prisma));
+  v1.use('/whatsapp', createWhatsappRouter(prisma));
   v1.use('/admin', createAdminRouter(prisma, notifier, carCatalog));
   app.use('/v1', v1);
 
