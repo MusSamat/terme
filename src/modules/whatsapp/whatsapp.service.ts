@@ -36,6 +36,13 @@ const STATUS_MAP: Record<string, string> = {
   failed: 'FAILED',
 };
 
+// Forward-only ranking so an out-of-order webhook (e.g. a late `delivered`
+// arriving after `read`) never downgrades a message's status.
+const STATUS_RANK: Record<string, number> = { SENT: 1, DELIVERED: 2, READ: 3, FAILED: 4 };
+function statusRank(s: string | null): number {
+  return s ? (STATUS_RANK[s] ?? 0) : 0;
+}
+
 // Non-text messages (image/audio/location/…) have no body — store a marker so
 // the inbox thread shows something rather than an empty bubble.
 function extractBody(m: WaTextMessage): string {
@@ -67,12 +74,49 @@ async function ingestInbound(prisma: PrismaClient, m: WaTextMessage): Promise<vo
 async function ingestStatus(prisma: PrismaClient, s: WaStatus): Promise<void> {
   const mapped = STATUS_MAP[s.status];
   if (!mapped) return;
-  // Match our OUTBOUND row by wamid. updateMany (not update) so a status for an
-  // unknown message id is a silent no-op instead of a throw.
-  await prisma.whatsappMessage.updateMany({
-    where: { whatsappMessageId: s.id, direction: 'OUTBOUND' },
-    data: { status: mapped },
+
+  const existing = await prisma.whatsappMessage.findUnique({
+    where: { whatsappMessageId: s.id },
+    select: { id: true, status: true },
   });
+
+  // Normal path: our OUTBOUND row exists → advance status forward-only.
+  if (existing) {
+    if (statusRank(mapped) > statusRank(existing.status)) {
+      await prisma.whatsappMessage.update({ where: { id: existing.id }, data: { status: mapped } });
+    }
+    return;
+  }
+
+  // Race: Meta can deliver the `sent`/`delivered` status webhook before the
+  // reply endpoint's row-save commits. Without a placeholder the status would be
+  // lost forever (updateMany no-op) and the bubble would stay stuck at SENT.
+  // Create a minimal OUTBOUND placeholder keyed by wamid; the reply upsert fills
+  // the body afterwards. recipient_id is the customer's number = conversation.
+  if (!s.recipient_id) return;
+  const conversation = await prisma.whatsappConversation.upsert({
+    where: { phoneNumber: s.recipient_id },
+    update: {},
+    create: { phoneNumber: s.recipient_id },
+  });
+  try {
+    await prisma.whatsappMessage.create({
+      data: {
+        conversationId: conversation.id,
+        direction: 'OUTBOUND',
+        body: '',
+        status: mapped,
+        whatsappMessageId: s.id,
+      },
+    });
+  } catch {
+    // Lost the create race with the reply endpoint — the row now exists; apply
+    // the status as an update instead.
+    await prisma.whatsappMessage.updateMany({
+      where: { whatsappMessageId: s.id },
+      data: { status: mapped },
+    });
+  }
 }
 
 /**

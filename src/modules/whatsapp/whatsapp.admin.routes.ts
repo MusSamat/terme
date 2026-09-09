@@ -23,6 +23,7 @@ export function createWhatsappAdminRouter(prisma: PrismaClient): Router {
     asyncHandler(async (_req, res) => {
       const rows = await prisma.whatsappConversation.findMany({
         orderBy: { lastMessageAt: 'desc' },
+        take: 200,
         include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } },
       });
       res.json(
@@ -68,8 +69,14 @@ export function createWhatsappAdminRouter(prisma: PrismaClient): Router {
       const { text } = req.body as z.infer<typeof ReplyBody>;
       const { wamid } = await sendWhatsappText(conversation.phoneNumber, text);
 
-      const message = await prisma.whatsappMessage.create({
-        data: {
+      // Upsert (not create) by wamid: a delivery-status webhook for this message
+      // can race ahead and create a placeholder row first (see ingestStatus). If
+      // so, fill in the body but keep the already-advanced status — don't reset
+      // it to SENT. Upsert also avoids a unique-collision 500 on that race.
+      const message = await prisma.whatsappMessage.upsert({
+        where: { whatsappMessageId: wamid },
+        update: { body: text, conversationId: conversation.id, direction: 'OUTBOUND' },
+        create: {
           conversationId: conversation.id,
           direction: 'OUTBOUND',
           body: text,
