@@ -1,8 +1,11 @@
 import { z } from 'zod';
 
-// TZ §8.3 — "Валидация формата на клиенте: /^\+996[0-9]{9}$/"
-// Enforce the same on the server.
-export const KgPhoneSchema = z.string().regex(/^\+996\d{9}$/, 'phone must match +996XXXXXXXXX');
+// Phone is E.164. Kyrgyz numbers (+996) must be exactly 9 national digits;
+// any other country code follows general E.164 (7–15 digits total). Name kept
+// as KgPhoneSchema so existing imports don't change.
+export const KgPhoneSchema = z
+  .string()
+  .regex(/^(?:\+996\d{9}|\+(?!996)[1-9]\d{6,14})$/, 'phone must be E.164 (e.g. +996XXXXXXXXX)');
 
 // TZ §8.2.1 — Telegram initData comes as a URL-encoded query string.
 export const TelegramLoginBody = z.object({
@@ -36,7 +39,8 @@ export const RegisterBody = z.object({
   code: z.string().regex(/^\d{6}$/, 'code must be 6 digits'),
   name: z.string().trim().min(1).max(100),
   surname: z.string().trim().min(1).max(100),
-  password: z.string().min(8).max(200).regex(/\d/, 'password must contain a digit'),
+  // Optional: mobile registers passwordless (phone+OTP only); web sends a password.
+  password: z.string().min(8).max(200).regex(/\d/, 'password must contain a digit').optional(),
   channel: z.enum(['mobile', 'web']).default('mobile'),
 });
 

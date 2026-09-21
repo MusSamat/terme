@@ -436,12 +436,15 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
     code: string,
     name: string,
     surname: string,
-    plainPassword: string,
+    plainPassword: string | undefined,
     deviceInfo?: string,
   ): Promise<AuthResult> {
     await consumeOtp(phone, code);
     const now = new Date();
-    const passwordHash = await password.hash(plainPassword);
+    // Passwordless registration (mobile): no password → passwordHash stays NULL,
+    // the account logs in via phone+OTP only. Web still sends a password.
+    const passwordHash = plainPassword ? await password.hash(plainPassword) : null;
+    const pwFields = passwordHash ? { passwordHash, lastPasswordChangedAt: now } : {};
 
     const user = await prisma.$transaction(async (tx) => {
       const existing = await tx.user.findFirst({ where: { phone, deletedAt: null } });
@@ -454,10 +457,9 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
             data: {
               name,
               surname,
-              passwordHash,
               phoneVerifiedAt: existing.phoneVerifiedAt ?? now,
               termsAcceptedAt: existing.termsAcceptedAt ?? now,
-              lastPasswordChangedAt: now,
+              ...pwFields,
             },
           })
         : await tx.user.create({
@@ -465,12 +467,11 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
               phone,
               name,
               surname,
-              passwordHash,
               language: 'ru',
               roles: ['passenger'],
               phoneVerifiedAt: now,
               termsAcceptedAt: now,
-              lastPasswordChangedAt: now,
+              ...pwFields,
             },
           });
       await tx.authProvider.upsert({

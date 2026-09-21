@@ -110,7 +110,7 @@ export function createAuthRouter(
         code: string;
         name: string;
         surname: string;
-        password: string;
+        password?: string;
       };
       const result = await service.registerWithPhone(
         phone,

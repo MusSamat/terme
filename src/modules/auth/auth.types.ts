@@ -79,7 +79,7 @@ export interface AuthService {
     code: string,
     name: string,
     surname: string,
-    plainPassword: string,
+    plainPassword: string | undefined,
     deviceInfo?: string,
   ): Promise<AuthResult>;
   refresh(token: string, deviceInfo: string | undefined, ip: string | null): Promise<TokenPair>;

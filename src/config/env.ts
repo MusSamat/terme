@@ -36,7 +36,7 @@ const EnvSchema = z.object({
   JWT_REFRESH_INACTIVITY_DAYS: z.coerce.number().int().positive().default(30),
 
   TELEGRAM_BOT_TOKEN: z.string().default(''),
-  TELEGRAM_BOT_USERNAME: z.string().default('tappjet_bot'),
+  TELEGRAM_BOT_USERNAME: z.string().default('terme_kg_bot'),
   // Telegram Gateway API token — delivers OTP codes to a phone over Telegram
   // (https://gateway.telegram.org). Empty during the testing period: codes are
   // captured/logged locally instead of sent (see lib/telegramGateway.ts).
