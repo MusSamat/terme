@@ -3,11 +3,12 @@ import { Errors, AppError } from '@/lib/errors.js';
 import * as password from '@/lib/bcrypt.js';
 import { generateOtp, generateUuid } from '@/lib/random.js';
 import { recordSent } from '@/lib/sms.js';
-// Telegram Gateway is commented out for now — the number is obtained only via
-// Telegram (Mini App requestContact / browser bot request_contact). Re-enable
-// the sendGatewayVerification call in sendOtp (and this import) when a token exists.
+import { whatsappEnabled, sendWhatsappOtp } from '@/lib/whatsapp.js';
+// OTP is delivered via WhatsApp for now (see deliverOtp). The other channels —
+// Telegram Gateway and Dexatel — are commented out; re-enable their imports and
+// the branches in sendTelegramOtp / consumeOtp when we bring them back.
 // import { sendGatewayVerification } from '@/lib/telegramGateway.js';
-import { dexatelEnabled, dexatelSendVerification, dexatelCheckCode } from '@/lib/dexatel.js';
+// import { dexatelEnabled, dexatelSendVerification, dexatelCheckCode } from '@/lib/dexatel.js';
 import { logger } from '@/lib/logger.js';
 import { env } from '@/config/env.js';
 import type { Provider } from '@/lib/jwt.js';
@@ -58,6 +59,19 @@ async function createOtpRecord(prisma: PrismaClient, phone: string): Promise<str
   const expiresAt = new Date(Date.now() + OTP_TTL_SEC * 1000);
   await prisma.otpCode.create({ data: { phone, codeHash, expiresAt } });
   return code;
+}
+
+// Single OTP delivery channel. Primary: WhatsApp authentication template.
+// When WhatsApp isn't configured (dev / CI / tests) we capture the code locally
+// so those environments keep working without a live Cloud API. `text` is only
+// used by that local fallback — the WhatsApp template renders its own copy.
+async function deliverOtp(phone: string, code: string, text: string): Promise<void> {
+  if (whatsappEnabled()) {
+    await sendWhatsappOtp(phone, code);
+    return;
+  }
+  recordSent(phone, text);
+  logger.info({ phone }, '[MOCK OTP] captured locally (WhatsApp not configured)');
 }
 
 // Called by the grammy /start handler when the user opens the deep-link.
@@ -241,13 +255,7 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
     const code = await createOtpRecord(prisma, phone);
     const text = `Terme: ${code} — код подтверждения. Срок действия: 10 минут.`;
     try {
-      // Real delivery is DISABLED for now — the phone number is obtained only via
-      // Telegram (Mini App requestContact, or browser login via the bot's
-      // request_contact button). Nothing is sent to the number; the code is just
-      // captured/logged locally so dev + tests keep working.
-      recordSent(phone, text);
-      // await sendGatewayVerification(phone, code, text, OTP_TTL_SEC);  // Telegram Gateway (needs token)
-      // await getSmsProvider().send(phone, text);                       // SMS
+      await deliverOtp(phone, code, text);
     } catch (err) {
       logger.error({ err, phone }, 'OTP delivery failed');
       throw Errors.serviceUnavailable('OTP delivery failed');
@@ -259,25 +267,19 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
     };
   }
 
-  // Send a login/reset OTP over Telegram. With Dexatel configured the code is
-  // delivered to the PHONE directly (no bot pre-link needed); otherwise we fall
-  // back to the local dev path that captures the code in the mock buffer.
+  // Login / forgot-password OTP. Delivered via WhatsApp (deliverOtp) like every
+  // other code — we generate + hash it locally, so consumeOtp verifies the hash.
+  // (The former Dexatel Telegram-Verify path is disabled; re-enable its branch
+  // here and in consumeOtp when Dexatel comes back.)
   async function sendTelegramOtp(phone: string): Promise<{ expiresInSec: number }> {
-    if (dexatelEnabled()) {
-      // Enforce the per-phone cost cap BEFORE spending a paid Dexatel message.
-      await assertOtpSendAllowed(prisma, phone);
-      await dexatelSendVerification(phone, OTP_TTL_SEC);
-      // Marker row for throttle accounting — Dexatel owns the real code, so we
-      // store no hash; consumeOtp() checks Dexatel, never this row.
-      await prisma.otpCode.create({
-        data: { phone, codeHash: 'dexatel', expiresAt: new Date(Date.now() + OTP_TTL_SEC * 1000) },
-      });
-      return { expiresInSec: OTP_TTL_SEC };
-    }
     const code = await createOtpRecord(prisma, phone);
     const text = `Terme: ${code} — код подтверждения. Срок действия: 10 минут.`;
-    recordSent(phone, text);
-    logger.info({ phone }, '[MOCK OTP] code captured locally (no DEXATEL_API_KEY)');
+    try {
+      await deliverOtp(phone, code, text);
+    } catch (err) {
+      logger.error({ err, phone }, 'OTP delivery failed');
+      throw Errors.serviceUnavailable('OTP delivery failed');
+    }
     return { expiresInSec: OTP_TTL_SEC };
   }
 
@@ -404,11 +406,9 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
   // the provider (it owns generation, expiry, single-use). Without a key we fall
   // back to the local bcrypt otpCode table (dev/tests). Throws on any mismatch.
   async function consumeOtp(phone: string, code: string): Promise<void> {
-    if (dexatelEnabled()) {
-      const ok = await dexatelCheckCode(phone, code);
-      if (!ok) throw Errors.otpWrong();
-      return;
-    }
+    // Code is generated + bcrypt-hashed locally and delivered via WhatsApp, so
+    // we always verify against the stored hash. (Dexatel server-side check is
+    // disabled — re-enable its branch here when Dexatel comes back.)
     const now = new Date();
     const recent = await prisma.otpCode.findFirst({ where: { phone }, orderBy: { createdAt: 'desc' } });
     if (!recent) throw Errors.otpWrong();

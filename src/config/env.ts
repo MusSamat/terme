@@ -60,6 +60,10 @@ const EnvSchema = z.object({
   WHATSAPP_APP_SECRET: z.string().default(''),
   WHATSAPP_VERIFY_TOKEN: z.string().default(''),
   WHATSAPP_API_VERSION: z.string().default('v21.0'),
+  // OTP delivery via WhatsApp authentication template. The template must be
+  // approved in Meta in this language with a body param + copy-code URL button.
+  WHATSAPP_OTP_TEMPLATE: z.string().default('terme_otp'),
+  WHATSAPP_OTP_LANG: z.string().default('ru'),
 
   SMS_PROVIDER: z.enum(['mock', 'mega', 'nikita']).default('mock'),
   SMS_API_URL: z.string().default(''),
