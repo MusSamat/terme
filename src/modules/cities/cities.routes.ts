@@ -140,6 +140,7 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
           FROM cities
           WHERE is_active = true
             AND is_searchable = true
+            AND type <> 'oblast'
             AND (
               name_en ILIKE ${pattern}
               OR EXISTS (
@@ -162,6 +163,7 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
           FROM cities
           WHERE is_active = true
             AND is_searchable = true
+            AND type <> 'oblast'
           ORDER BY priority DESC, name_ru ASC
           LIMIT ${limit}
         `;
