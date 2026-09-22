@@ -30,32 +30,44 @@ export function createSessionMethods(prisma: PrismaClient, _notifier: Notifier) 
       throw Errors.unauthorized({ reason: 'refresh_not_found' });
     }
 
-    if (stored.usedAt) {
-      // Launch-softened: a stale/already-used refresh token is rejected, but we
-      // no longer mass-revoke every session or push a security alert. The
-      // «подозрительная активность» notifications were false positives from
-      // concurrent refreshes and were logging users out. Just fail this token —
-      // the client re-authenticates from its still-valid session.
+    // Grace window: a token used VERY recently is almost always a legit client
+    // retry — a concurrent refresh, or an app-restart/update where the previous
+    // rotation's new cookie wasn't persisted before the app was killed. Inside
+    // the window we re-issue a fresh pair instead of logging the user out. Only
+    // a token used longer ago is treated as a stale/real reuse and rejected
+    // (softened: no mass-revoke, no security alert — those were false positives).
+    const GRACE_MS = 60_000;
+    const withinGrace =
+      stored.usedAt != null && Date.now() - stored.usedAt.getTime() < GRACE_MS;
+
+    if (stored.usedAt && !withinGrace) {
       logger.warn(
         { userId: stored.userId, tokenId: stored.id, ip },
         'refresh token already used — rejected (no mass-revoke)',
       );
       throw Errors.unauthorized({ reason: 'refresh_reused' });
     }
-    if (stored.revokedAt) throw Errors.unauthorized({ reason: 'refresh_revoked' });
+    if (stored.revokedAt && !withinGrace) {
+      throw Errors.unauthorized({ reason: 'refresh_revoked' });
+    }
     if (stored.expiresAt.getTime() <= Date.now()) {
       throw Errors.unauthorized({ reason: 'refresh_expired' });
     }
 
-    const markRes = await prisma.refreshToken.updateMany({
-      where: { id: stored.id, usedAt: null, revokedAt: null },
-      data: { usedAt: new Date(), revokedAt: new Date() },
-    });
-    if (markRes.count !== 1) {
-      // Concurrent-refresh race: another request already rotated this token.
-      // Reject this retry without mass-revoke / alert — the winning refresh's
-      // session stays valid.
-      throw Errors.unauthorized({ reason: 'refresh_race' });
+    if (!withinGrace) {
+      const markRes = await prisma.refreshToken.updateMany({
+        where: { id: stored.id, usedAt: null, revokedAt: null },
+        data: { usedAt: new Date(), revokedAt: new Date() },
+      });
+      if (markRes.count !== 1) {
+        // Lost the mark race by a hair — the winning refresh already rotated it
+        // within the same tick; treat as grace (issue a fresh pair) rather than
+        // reject, so the retry doesn't get logged out.
+        logger.warn(
+          { userId: stored.userId, tokenId: stored.id },
+          'refresh mark race — issuing fresh pair (grace)',
+        );
+      }
     }
 
     const user = await prisma.user.findUnique({ where: { id: stored.userId } });
