@@ -204,18 +204,20 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
 
     const full = await loadDTO(prisma, created.id);
 
-    // Notify driver — best-effort, outside the transaction. A push/notification
-    // failure must NOT fail the booking (it's already committed) — fault isolation.
-    try {
-      await notifier.bookingNewRequest(full.trip.driverId, {
+    // Notify driver — FIRE-AND-FORGET. The booking is already committed, so a
+    // slow or hanging external notifier (the Telegram DM to the driver) must
+    // never delay the response or cause a proxy 502. Run it in the background;
+    // log failures, never throw, never await.
+    void notifier
+      .bookingNewRequest(full.trip.driverId, {
         booking: full,
         trip: full.trip,
         passengerName: full.passenger.name,
         passengerRating: full.passenger.rating,
-      });
-    } catch (err) {
-      logger.error({ err, bookingId: full.id }, 'bookingNewRequest notify failed (booking kept)');
-    }
+      })
+      .catch((err) =>
+        logger.error({ err, bookingId: full.id }, 'bookingNewRequest notify failed (booking kept)'),
+      );
 
     return { booking: full, reused: false };
   }
