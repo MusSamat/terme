@@ -20,13 +20,15 @@ const RAW_ROUTES: Array<[string, string, RouteSpec]> = [
   ['Бишкек', 'Нарын', { durationMin: 5 * 60, distanceKm: 320 }],
   ['Бишкек', 'Талас', { durationMin: 5 * 60, distanceKm: 320 }],
   ['Бишкек', 'Чолпон-Ата', { durationMin: 4 * 60, distanceKm: 250 }],
-  ['Бишкек', 'Джалал-Абад', { durationMin: 9 * 60, distanceKm: 500 }],
+  ['Бишкек', 'Жалал-Абад', { durationMin: 9 * 60, distanceKm: 500 }],
+  ['Бишкек', 'Манас', { durationMin: 9 * 60, distanceKm: 510 }],
   ['Бишкек', 'Баткен', { durationMin: 13 * 60, distanceKm: 700 }],
   ['Бишкек', 'Токмок', { durationMin: 1 * 60, distanceKm: 60 }],
   ['Бишкек', 'Кара-Балта', { durationMin: 1 * 60, distanceKm: 65 }],
   ['Бишкек', 'Иссык-Куль', { durationMin: 5 * 60, distanceKm: 300 }],
   // Secondary pairs — enough for launch routes + basic coverage.
-  ['Ош', 'Джалал-Абад', { durationMin: 2 * 60, distanceKm: 100 }],
+  ['Ош', 'Жалал-Абад', { durationMin: 2 * 60, distanceKm: 100 }],
+  ['Ош', 'Манас', { durationMin: 2 * 60, distanceKm: 110 }],
   ['Ош', 'Баткен', { durationMin: 4 * 60, distanceKm: 190 }],
   ['Каракол', 'Чолпон-Ата', { durationMin: 2 * 60, distanceKm: 150 }],
 ];

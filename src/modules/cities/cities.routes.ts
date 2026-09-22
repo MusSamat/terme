@@ -20,6 +20,7 @@ import {
 
 interface CityRow {
   id: number;
+  type: string;
   name_ru: string;
   name_kg: string;
   name_en: string;
@@ -36,6 +37,7 @@ interface CityRow {
 function toDto(r: CityRow) {
   return {
     id: r.id,
+    type: r.type, // city | town | village | raion … — client labels район/шаар
     nameRu: r.name_ru,
     nameKg: r.name_kg,
     nameEn: r.name_en,
@@ -56,8 +58,8 @@ const POPULAR_ROUTES = [
   { from: 'Ош', to: 'Бишкек' },
   { from: 'Бишкек', to: 'Каракол' },
   { from: 'Бишкек', to: 'Нарын' },
-  { from: 'Бишкек', to: 'Джалал-Абад' },
-  { from: 'Ош', to: 'Джалал-Абад' },
+  { from: 'Бишкек', to: 'Манас' },
+  { from: 'Ош', to: 'Манас' },
   { from: 'Бишкек', to: 'Талас' },
   { from: 'Бишкек', to: 'Балыкчы' },
   { from: 'Ош', to: 'Баткен' },
@@ -132,7 +134,7 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
           ' OR ',
         );
         const rows = await prisma.$queryRaw<CityRow[]>`
-          SELECT id, name_ru, name_kg, name_en,
+          SELECT id, type, name_ru, name_kg, name_en,
                  region_name_ru, region_name_kg,
                  district_name_ru, district_name_kg,
                  aiyl_aimak_name_ru, aiyl_aimak_name_kg,
@@ -140,11 +142,11 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
           FROM cities
           WHERE is_active = true
             AND is_searchable = true
-            -- Only settlements are travel destinations. Exclude administrative
-            -- areas (oblast, raion) — they duplicate the same-named city/town
-            -- («Баткен» область/район vs the город Баткен) and aren't pickable
-            -- destinations. The city keeps «…району» as its subtitle for context.
-            AND type NOT IN ('oblast', 'raion')
+            -- Hide oblasts (never a destination). Raions are governed by
+            -- is_searchable — only same-named ones (e.g. «Баткен район» next to
+            -- the город Баткен) are enabled; the client tags each result
+            -- «район» / «город» so homonyms read clearly.
+            AND type <> 'oblast'
             AND (
               name_en ILIKE ${pattern}
               OR EXISTS (
@@ -159,7 +161,7 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
         res.json({ data: rows.map(toDto) });
       } else {
         const rows = await prisma.$queryRaw<CityRow[]>`
-          SELECT id, name_ru, name_kg, name_en,
+          SELECT id, type, name_ru, name_kg, name_en,
                  region_name_ru, region_name_kg,
                  district_name_ru, district_name_kg,
                  aiyl_aimak_name_ru, aiyl_aimak_name_kg,
@@ -167,11 +169,11 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
           FROM cities
           WHERE is_active = true
             AND is_searchable = true
-            -- Only settlements are travel destinations. Exclude administrative
-            -- areas (oblast, raion) — they duplicate the same-named city/town
-            -- («Баткен» область/район vs the город Баткен) and aren't pickable
-            -- destinations. The city keeps «…району» as its subtitle for context.
-            AND type NOT IN ('oblast', 'raion')
+            -- Hide oblasts (never a destination). Raions are governed by
+            -- is_searchable — only same-named ones (e.g. «Баткен район» next to
+            -- the город Баткен) are enabled; the client tags each result
+            -- «район» / «город» so homonyms read clearly.
+            AND type <> 'oblast'
           ORDER BY priority DESC, name_ru ASC
           LIMIT ${limit}
         `;

@@ -54,7 +54,7 @@ const BASE_ROUTES: Array<{ a: string; b: string; price: number; dur: number }> =
   { a: 'Бишкек', b: 'Каракол',      price: 800,  dur: 360 },
   { a: 'Бишкек', b: 'Нарын',        price: 700,  dur: 300 },
   { a: 'Бишкек', b: 'Талас',        price: 600,  dur: 300 },
-  { a: 'Бишкек', b: 'Джалал-Абад',  price: 1100, dur: 560 },
+  { a: 'Бишкек', b: 'Манас',  price: 1100, dur: 560 },
 ];
 const ROUTES = BASE_ROUTES.flatMap((r) => [
   { origin: r.a, destination: r.b, price: r.price, dur: r.dur },
