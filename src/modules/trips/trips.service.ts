@@ -650,26 +650,35 @@ export function createTripsService(
           cancelledAt: new Date(),
         },
       });
-      await tx.driverProfile.update({
+      // updateMany (not update): the driver may not have a driverProfile row
+      // yet (seeded/test trips, driver who never verified). update() would throw
+      // P2025 and 500 the whole cancel — updateMany is a no-op on 0 rows.
+      await tx.driverProfile.updateMany({
         where: { userId: driverUserId },
         data: { cancellations30d: { increment: 1 } },
       });
       return affectedBookings.map((b) => b.passengerId);
     });
 
-    // Notify each impacted passenger outside the transaction.
+    // Notify each impacted passenger outside the transaction. Best-effort: the
+    // trip is already cancelled in the DB, so a notifier/socket failure must not
+    // surface as a 500 for a successful cancel.
     if (notifier) {
-      const freshTrip = await prisma.trip.findUniqueOrThrow({ where: { id } });
-      const publicTrip = {
-        id: freshTrip.id,
-        driverId: freshTrip.driverId,
-        originCity: freshTrip.originCity,
-        destinationCity: freshTrip.destinationCity,
-        departureAt: freshTrip.departureAt,
-      };
-      await Promise.all(
-        affected.map((passengerId) => notifier.tripCancelled(passengerId, { trip: publicTrip })),
-      );
+      try {
+        const freshTrip = await prisma.trip.findUniqueOrThrow({ where: { id } });
+        const publicTrip = {
+          id: freshTrip.id,
+          driverId: freshTrip.driverId,
+          originCity: freshTrip.originCity,
+          destinationCity: freshTrip.destinationCity,
+          departureAt: freshTrip.departureAt,
+        };
+        await Promise.all(
+          affected.map((passengerId) => notifier.tripCancelled(passengerId, { trip: publicTrip })),
+        );
+      } catch (err) {
+        logger.error({ err, tripId: id }, 'trip cancel: passenger notify failed');
+      }
     }
 
     return { status: 'cancelled' };
