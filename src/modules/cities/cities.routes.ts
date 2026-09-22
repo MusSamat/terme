@@ -140,7 +140,11 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
           FROM cities
           WHERE is_active = true
             AND is_searchable = true
-            AND type <> 'oblast'
+            -- Only settlements are travel destinations. Exclude administrative
+            -- areas (oblast, raion) — they duplicate the same-named city/town
+            -- («Баткен» область/район vs the город Баткен) and aren't pickable
+            -- destinations. The city keeps «…району» as its subtitle for context.
+            AND type NOT IN ('oblast', 'raion')
             AND (
               name_en ILIKE ${pattern}
               OR EXISTS (
@@ -163,7 +167,11 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
           FROM cities
           WHERE is_active = true
             AND is_searchable = true
-            AND type <> 'oblast'
+            -- Only settlements are travel destinations. Exclude administrative
+            -- areas (oblast, raion) — they duplicate the same-named city/town
+            -- («Баткен» область/район vs the город Баткен) and aren't pickable
+            -- destinations. The city keeps «…району» as its subtitle for context.
+            AND type NOT IN ('oblast', 'raion')
           ORDER BY priority DESC, name_ru ASC
           LIMIT ${limit}
         `;
