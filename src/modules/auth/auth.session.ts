@@ -13,7 +13,9 @@ import type { Notifier } from '@/lib/notifier.js';
 import type { TokenPair, AdminRefreshResult } from './auth.types.js';
 import { issueTokenPair, inferPrimaryProvider } from './auth.helpers.js';
 
-export function createSessionMethods(prisma: PrismaClient, notifier: Notifier) {
+// _notifier kept in the signature (callers pass it) — the reuse security alert
+// is intentionally disabled for launch; re-enable in auth.session if needed.
+export function createSessionMethods(prisma: PrismaClient, _notifier: Notifier) {
   // Token Reuse Detection per TZ §7.5
   async function refresh(
     token: string,
@@ -29,16 +31,16 @@ export function createSessionMethods(prisma: PrismaClient, notifier: Notifier) {
     }
 
     if (stored.usedAt) {
-      await prisma.refreshToken.updateMany({
-        where: { userId: stored.userId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-      await notifier.securityAlertReuse(stored.userId, { reusedAt: new Date(), ip });
+      // Launch-softened: a stale/already-used refresh token is rejected, but we
+      // no longer mass-revoke every session or push a security alert. The
+      // «подозрительная активность» notifications were false positives from
+      // concurrent refreshes and were logging users out. Just fail this token —
+      // the client re-authenticates from its still-valid session.
       logger.warn(
         { userId: stored.userId, tokenId: stored.id, ip },
-        'TOKEN_REUSE_DETECTED — all sessions invalidated',
+        'refresh token already used — rejected (no mass-revoke)',
       );
-      throw Errors.unauthorized({ reason: 'token_reuse_detected' });
+      throw Errors.unauthorized({ reason: 'refresh_reused' });
     }
     if (stored.revokedAt) throw Errors.unauthorized({ reason: 'refresh_revoked' });
     if (stored.expiresAt.getTime() <= Date.now()) {
@@ -50,12 +52,10 @@ export function createSessionMethods(prisma: PrismaClient, notifier: Notifier) {
       data: { usedAt: new Date(), revokedAt: new Date() },
     });
     if (markRes.count !== 1) {
-      await prisma.refreshToken.updateMany({
-        where: { userId: stored.userId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-      await notifier.securityAlertReuse(stored.userId, { reusedAt: new Date(), ip });
-      throw Errors.unauthorized({ reason: 'token_reuse_detected' });
+      // Concurrent-refresh race: another request already rotated this token.
+      // Reject this retry without mass-revoke / alert — the winning refresh's
+      // session stays valid.
+      throw Errors.unauthorized({ reason: 'refresh_race' });
     }
 
     const user = await prisma.user.findUnique({ where: { id: stored.userId } });
