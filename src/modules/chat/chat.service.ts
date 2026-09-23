@@ -55,6 +55,8 @@ export interface ChatSummary {
   otherAvatarUrl: string | null;
   route: string;
   lastMessageAt: string | null;
+  /** Text of the most recent message — the chat-list preview line. */
+  lastMessage: string | null;
   unreadCount: number;
 }
 
@@ -278,11 +280,21 @@ export function createChatService(prisma: PrismaClient, notifier: Notifier): Cha
   }
 
   async function summaries(userId: string): Promise<ChatSummary[]> {
-    // All accepted/completed bookings where the user is driver or passenger
+    // Accepted/completed bookings always chat-worthy; pending/viewed ones only
+    // once the pre-booking conversation actually started (has messages) — a
+    // passenger who wrote before acceptance must see the thread in the list
+    // (it used to be invisible until the driver accepted).
     const bookings = await prisma.booking.findMany({
       where: {
-        status: { in: ['accepted', 'completed'] },
-        OR: [{ passengerId: userId }, { trip: { driverId: userId } }],
+        AND: [
+          { OR: [{ passengerId: userId }, { trip: { driverId: userId } }] },
+          {
+            OR: [
+              { status: { in: ['accepted', 'completed'] } },
+              { status: { in: ['pending', 'viewed'] }, messages: { some: {} } },
+            ],
+          },
+        ],
       },
       include: {
         trip: {
@@ -297,7 +309,7 @@ export function createChatService(prisma: PrismaClient, notifier: Notifier): Cha
         messages: {
           orderBy: { createdAt: 'desc' },
           take: 1,
-          select: { createdAt: true },
+          select: { createdAt: true, text: true },
         },
       },
     });
@@ -331,6 +343,7 @@ export function createChatService(prisma: PrismaClient, notifier: Notifier): Cha
               : toFileUrl(b.trip.driver?.avatarUrl),
             route: `${b.trip.originCity} → ${b.trip.destinationCity}`,
             lastMessageAt,
+            lastMessage: b.messages[0]?.text ?? null,
             unreadCount: unreadMap[b.id] ?? 0,
           };
         })
