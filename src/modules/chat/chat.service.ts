@@ -345,15 +345,16 @@ export function createChatService(prisma: PrismaClient, notifier: Notifier): Cha
             lastMessageAt,
             lastMessage: b.messages[0]?.text ?? null,
             unreadCount: unreadMap[b.id] ?? 0,
+            // Sort key only (stripped below): last activity, or booking creation
+            // for chats without messages yet — new chats float to the top.
+            activityAt: lastMessageAt ?? b.createdAt.toISOString(),
           };
         })
-        // Most recently active chats first; bookings with no messages go to end
-        .sort((a, b) => {
-          if (!a.lastMessageAt && !b.lastMessageAt) return 0;
-          if (!a.lastMessageAt) return 1;
-          if (!b.lastMessageAt) return -1;
-          return new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime();
-        })
+        // Messenger ordering (WhatsApp-style): newest activity first. A chat
+        // with no messages yet is «new» — its activity is the booking creation
+        // time, so a fresh booking lands on top instead of sinking to the end.
+        .sort((a, b) => new Date(b.activityAt).getTime() - new Date(a.activityAt).getTime())
+        .map(({ activityAt: _activityAt, ...rest }) => rest)
     );
   }
 
