@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import type { Notifier } from '@/lib/notifier.js';
 import { CronScheduler } from './scheduler.js';
 import { cleanupExpiredOtpJob } from './jobs/cleanupOtp.js';
 import { cleanupExpiredRefreshJob } from './jobs/cleanupRefreshTokens.js';
@@ -13,8 +14,8 @@ import { analyticsRecalcJob } from './jobs/analyticsRecalc.js';
 import { dbBackupJob } from './jobs/dbBackup.js';
 import { filesBackupJob } from './jobs/filesBackup.js';
 
-export function buildScheduler(prisma: PrismaClient): CronScheduler {
-  const scheduler = new CronScheduler(prisma);
+export function buildScheduler(prisma: PrismaClient, notifier?: Notifier): CronScheduler {
+  const scheduler = new CronScheduler(prisma, notifier);
   scheduler.register(cleanupExpiredOtpJob);
   scheduler.register(cleanupExpiredRefreshJob);
   scheduler.register(escalateVerificationsJob);

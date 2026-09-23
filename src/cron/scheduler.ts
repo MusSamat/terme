@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import os from 'node:os';
 import type { PrismaClient } from '@prisma/client';
+import type { Notifier } from '@/lib/notifier.js';
 import { logger } from '@/lib/logger.js';
 
 /**
@@ -17,7 +18,10 @@ export interface Job {
   name: string;
   schedule: string;       // cron expression
   maxRuntimeSec: number;  // lock TTL — pick > typical runtime
-  run(prisma: PrismaClient): Promise<void>;
+  // notifier is optional: jobs that notify users (auto_complete_trips) get the
+  // live channel (socket+telegram) when the scheduler is built with one; tests
+  // and jobs that don't notify simply ignore it.
+  run(prisma: PrismaClient, notifier?: Notifier): Promise<void>;
 }
 
 const INSTANCE_ID = `${os.hostname()}#${process.pid}`;
@@ -68,7 +72,10 @@ export class CronScheduler {
   // job finishes (and releases its lock) before Prisma is disconnected.
   private inFlight = new Map<string, Promise<void>>();
 
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly notifier?: Notifier,
+  ) {}
 
   register(job: Job): void {
     const task = cron.schedule(
@@ -100,7 +107,7 @@ export class CronScheduler {
     }
     const start = Date.now();
     try {
-      await job.run(this.prisma);
+      await job.run(this.prisma, this.notifier);
       logger.info({ job: job.name, duration_ms: Date.now() - start }, 'cron job done');
     } catch (err) {
       logger.error({ err, job: job.name }, 'cron job failed');

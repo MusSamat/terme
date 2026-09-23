@@ -132,8 +132,24 @@ describe('POST /v1/auth/phone/reset-password — forgot password (post-OTP)', ()
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('requires authentication (401 without a token)', async () => {
-    const res = await request(app).post('/v1/auth/phone/reset-password').send({ newPassword: 'recovered1' });
-    expect(res.status).toBe(401);
+  it('works WITHOUT a session (forgot password) given a valid OTP proof', async () => {
+    await registerUser(PHONE, 'forgotten1');
+    await seedOtp(PHONE, '111222');
+
+    const res = await request(app)
+      .post('/v1/auth/phone/reset-password')
+      .send({ phone: PHONE, code: '111222', newPassword: 'recovered2' });
+    expect(res.status).toBe(204);
+    expect((await login(PHONE, 'recovered2')).status).toBe(200);
+  });
+
+  it('rejects an anonymous reset with a wrong code (400 OTP_WRONG)', async () => {
+    await registerUser(PHONE, 'forgotten1');
+    const res = await request(app)
+      .post('/v1/auth/phone/reset-password')
+      .send({ phone: PHONE, code: '999999', newPassword: 'recovered3' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('OTP_WRONG');
+    expect((await login(PHONE, 'forgotten1')).status).toBe(200);
   });
 });

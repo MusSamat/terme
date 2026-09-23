@@ -14,10 +14,12 @@ export const autoCompleteTripsJob: Job = {
   // nicer output with the step form; semantics are identical.
   schedule: '*/15 * * * *',
   maxRuntimeSec: 120,
-  async run(prisma) {
+  async run(prisma, notifier) {
     // INTERVAL '2 hours' added to estimated_duration (minutes). Postgres needs
     // explicit interval math; we compose it from the column.
-    const closed = await prisma.$queryRaw<Array<{ id: string; driver_id: string }>>`
+    const closed = await prisma.$queryRaw<
+      Array<{ id: string; driver_id: string; origin_city: string; destination_city: string }>
+    >`
       UPDATE trips
       SET status = 'completed',
           completed_at = NOW(),
@@ -26,28 +28,52 @@ export const autoCompleteTripsJob: Job = {
       WHERE status IN ('active', 'direct')
         AND departure_at + (estimated_duration_min::text || ' minutes')::interval
             + INTERVAL '2 hours' < NOW()
-      RETURNING id, driver_id
+      RETURNING id, driver_id, origin_city, destination_city
     `;
     if (closed.length === 0) return;
 
-    // Emit rating_request notifications — one per booking participant (driver
-    // + each accepted passenger). TZ §15.2 trip_completed_rate.
-    // We do this in a single INSERT from SELECT for efficiency.
-    await prisma.$executeRaw`
-      INSERT INTO notifications (id, user_id, type, channel, payload, created_at)
-      SELECT gen_random_uuid(), u.user_id, 'trip_completed_rate', 'telegram',
-             jsonb_build_object('trip_id', t.id, 'origin_city', t.origin_city,
-                                'destination_city', t.destination_city),
-             NOW()
-      FROM trips t
-      JOIN LATERAL (
-        SELECT t.driver_id AS user_id
-        UNION
-        SELECT b.passenger_id AS user_id FROM bookings b
-          WHERE b.trip_id = t.id AND b.status = 'accepted'
-      ) u ON TRUE
-      WHERE t.id = ANY(${closed.map((c) => c.id)}::uuid[])
-    `;
+    // Rating-request notifications (TZ §15.2 trip_completed_rate). With a
+    // notifier we go through it per participant — that persists the row AND
+    // delivers live (socket + telegram), same as manual complete(). Without
+    // one (tests / standalone runs) fall back to the silent batch INSERT.
+    if (!notifier) {
+      await prisma.$executeRaw`
+        INSERT INTO notifications (id, user_id, type, channel, payload, created_at)
+        SELECT gen_random_uuid(), u.user_id, 'trip_completed_rate', 'telegram',
+               jsonb_build_object('trip_id', t.id, 'origin_city', t.origin_city,
+                                  'destination_city', t.destination_city),
+               NOW()
+        FROM trips t
+        JOIN LATERAL (
+          SELECT t.driver_id AS user_id
+          UNION
+          SELECT b.passenger_id AS user_id FROM bookings b
+            WHERE b.trip_id = t.id AND b.status = 'accepted'
+        ) u ON TRUE
+        WHERE t.id = ANY(${closed.map((c) => c.id)}::uuid[])
+      `;
+    } else {
+      for (const trip of closed) {
+        const users = await prisma.$queryRaw<Array<{ user_id: string }>>`
+          SELECT ${trip.driver_id}::uuid AS user_id
+          UNION
+          SELECT passenger_id AS user_id FROM bookings
+            WHERE trip_id = ${trip.id}::uuid AND status = 'accepted'
+        `;
+        const payload = {
+          trip_id: trip.id,
+          origin_city: trip.origin_city,
+          destination_city: trip.destination_city,
+        };
+        for (const { user_id } of users) {
+          // Fire-and-forget per user: one dead Telegram chat must not stall
+          // or fail the whole cron pass.
+          void notifier
+            .tripCompletedRate(user_id, payload)
+            .catch((err) => logger.warn({ err, user_id }, 'auto_complete: notify failed'));
+        }
+      }
+    }
 
     // Flip all still-accepted bookings to completed so passengers can rate.
     await prisma.booking.updateMany({

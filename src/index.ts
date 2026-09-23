@@ -44,7 +44,9 @@ async function main(): Promise<void> {
   const app = createApp(prisma, notifier, bot);
   server.on('request', app);
 
-  const scheduler: CronScheduler = buildScheduler(prisma);
+  // Notifier wired in so auto_complete_trips can deliver «оцените поездку»
+  // live (socket + telegram), not just as a silent notifications row.
+  const scheduler: CronScheduler = buildScheduler(prisma, notifier);
 
   // Listen errors (notably EADDRINUSE when tsx watch leaves a zombie holding
   // the port) otherwise bubble up as `uncaughtException`, which then tries to

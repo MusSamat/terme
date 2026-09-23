@@ -10,6 +10,7 @@ import {
   AppleLoginBody,
   CheckPhoneBody,
   GoogleLoginBody,
+  KgPhoneSchema,
   LogoutBody,
   PhoneLoginBody,
   RefreshBody,
@@ -21,7 +22,7 @@ import {
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { requireAdmin } from '@/middleware/auth.js';
-import { requireAuth } from '@/middleware/auth.js';
+import { requireAuth, optionalAuth } from '@/middleware/auth.js';
 import {
   adminLoginLimit,
   sendOtpDailyLimit,
@@ -284,17 +285,20 @@ export function createAuthRouter(
     }),
   );
 
-  // ─── Password reset (post-OTP flow — no current password required) ─
-  // M2: requires a FRESH OTP proof (phone + code) in addition to the access
-  // token. The code must be for the caller's own verified number; it is consumed
-  // single-use with ≤10 min freshness, and all other sessions are revoked.
+  // ─── Password reset (forgot-password / post-OTP flow) ─
+  // M2: authorised by a FRESH OTP proof (phone + code) — the same possession
+  // check that OTP login itself relies on, so this is deliberately usable
+  // WITHOUT a session (the forgot-password caller can't log in by definition).
+  // When a session IS present, the phone must be the caller's own number.
+  // The code is consumed single-use (≤10 min freshness, attempt caps) and all
+  // other sessions are revoked on success.
   router.post(
     '/phone/reset-password',
-    requireAuth,
+    optionalAuth,
     verifyOtpLimit,
     validate({
       body: z.object({
-        phone: z.string().min(5).max(20),
+        phone: KgPhoneSchema,
         code: z.string().min(4).max(8),
         newPassword: z.string().min(6).max(128),
       }),
@@ -305,6 +309,15 @@ export function createAuthRouter(
         code: string;
         newPassword: string;
       };
+      // Logged-in caller → their own account; anonymous (forgot password) →
+      // resolve the account by phone. Non-existent phone gets the same 401 as
+      // a wrong code (no account enumeration beyond /check-phone).
+      let userId = req.user?.id;
+      if (!userId) {
+        const owner = await prisma.user.findUnique({ where: { phone } });
+        if (!owner || owner.deletedAt) throw Errors.unauthorized({ reason: 'otp_wrong' });
+        userId = owner.id;
+      }
       // resetPassword's phone/code proof params are optional in the AuthService
       // interface (kept 2-arg-assignable), so widen the type here to pass them.
       await (
@@ -314,7 +327,7 @@ export function createAuthRouter(
           phone?: string,
           code?: string,
         ) => Promise<void>
-      )(req.user!.id, newPassword, phone, code);
+      )(userId, newPassword, phone, code);
       res.status(204).send();
     }),
   );
