@@ -106,6 +106,16 @@ const EnvSchema = z.object({
   // Comma-separated list of allowed CORS origins in production.
   // Dev always allows localhost:3000 and localhost:3001 automatically.
   ALLOWED_ORIGINS: z.string().default(''),
+
+  // Sentry error tracking. Empty (default) = fully disabled: Sentry.init() is
+  // never called and captureException() is inert. Set on staging/prod to enable.
+  SENTRY_DSN: z.string().default(''),
+
+  // Presence tunables (see modules/presence/presence.service.ts). Defaults match
+  // the service's historical values so behaviour is unchanged when unset.
+  PRESENCE_WINDOW_SEC: z.coerce.number().int().positive().default(60),
+  PRESENCE_THROTTLE_SEC: z.coerce.number().int().positive().default(20),
+  PRESENCE_CACHE_MS: z.coerce.number().int().positive().default(10_000),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -121,16 +131,18 @@ function parseEnv(): Env {
     process.stderr.write(`\n✗ Invalid environment variables:\n${issues}\n\n`);
     process.exit(1);
   }
-  // N14: in production OTP MUST have a real delivery channel. Without WhatsApp
-  // credentials deliverOtp() silently falls back to capturing the code in logs
-  // (a plaintext-OTP leak) — fail fast at startup instead.
-  if (
-    parsed.data.NODE_ENV === 'production' &&
-    (!parsed.data.WHATSAPP_ACCESS_TOKEN || !parsed.data.WHATSAPP_PHONE_NUMBER_ID)
-  ) {
+  // N14: in production OTP MUST have a real delivery channel. Without one,
+  // deliverOtp() silently falls back to capturing the code in logs (a
+  // plaintext-OTP leak) — fail fast at startup instead. WhatsApp (template) OR
+  // Dexatel (SMS fallback) satisfies this; either channel is enough.
+  const whatsappConfigured =
+    !!parsed.data.WHATSAPP_ACCESS_TOKEN && !!parsed.data.WHATSAPP_PHONE_NUMBER_ID;
+  const dexatelConfigured = !!parsed.data.DEXATEL_API_KEY;
+  if (parsed.data.NODE_ENV === 'production' && !whatsappConfigured && !dexatelConfigured) {
     process.stderr.write(
-      '\n✗ Production requires WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID ' +
-        'so OTP is delivered via WhatsApp and never captured to logs.\n\n',
+      '\n✗ Production requires an OTP delivery channel: either WhatsApp ' +
+        '(WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_NUMBER_ID) or Dexatel ' +
+        '(DEXATEL_API_KEY), so OTP is delivered and never captured to logs.\n\n',
     );
     process.exit(1);
   }

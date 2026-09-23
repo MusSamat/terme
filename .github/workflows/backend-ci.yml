@@ -1,0 +1,48 @@
+name: backend-ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: kosho
+          POSTGRES_PASSWORD: kosho
+          POSTGRES_DB: kosho_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kosho"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      # tests/setup.ts reads TEST_DATABASE_URL (falls back to DATABASE_URL) and
+      # runs `prisma migrate deploy` against it before the suite.
+      DATABASE_URL: postgresql://kosho:kosho@localhost:5432/kosho_test?schema=public
+      TEST_DATABASE_URL: postgresql://kosho:kosho@localhost:5432/kosho_test?schema=public
+      # ≥32-char dummies — env.ts zod schema rejects shorter secrets.
+      JWT_ACCESS_SECRET: ci-access-secret-0000000000000000000000000000000000
+      JWT_REFRESH_SECRET: ci-refresh-secret-000000000000000000000000000000000
+      LOG_LEVEL: silent
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npx tsc --noEmit
+      - run: npm test

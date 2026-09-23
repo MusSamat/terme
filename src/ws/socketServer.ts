@@ -1,7 +1,7 @@
 import type { Server as HttpServer } from 'node:http';
 import { Server as IoServer, type Socket } from 'socket.io';
 import type { PrismaClient } from '@prisma/client';
-import { verifyAccessToken } from '@/lib/jwt.js';
+import { verifyAccessToken, verifyAdminAccessToken } from '@/lib/jwt.js';
 import { isAllowedOrigin } from '@/lib/cors.js';
 import { logger } from '@/lib/logger.js';
 import { createChatService } from '@/modules/chat/chat.service.js';
@@ -28,11 +28,14 @@ import type { Notifier } from '@/lib/notifier.js';
 const CHAT_SEND_LIMIT_PER_MIN = 20;
 const TYPING_LIMIT_PER_10S = 10;
 
+// A socket is either a user connection (userId set, joins user/chat rooms) or an
+// admin connection (adminId set, joins only the admin:<id> room, no chat access).
 interface AuthedSocket extends Socket {
   data: {
-    userId: string;
-    phone: string;
-    roles: string[];
+    userId?: string;
+    phone?: string;
+    roles?: string[];
+    adminId?: string;
   };
 }
 
@@ -70,19 +73,39 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
       try {
         const token = extractToken(socket);
         if (!token) return next(new Error('auth_required'));
-        const decoded = verifyAccessToken(token);
-        const user = await prisma.user.findUnique({
-          where: { id: decoded.sub },
-          select: { isBlocked: true, deletedAt: true },
+        // Try a user access token first; if that fails, try an admin access
+        // token. Admin sockets exist only to receive admin:<id> notifications
+        // (new_complaint etc.) — they never join user/chat rooms.
+        let decoded: ReturnType<typeof verifyAccessToken> | null = null;
+        try {
+          decoded = verifyAccessToken(token);
+        } catch {
+          decoded = null;
+        }
+        if (decoded) {
+          const user = await prisma.user.findUnique({
+            where: { id: decoded.sub },
+            select: { isBlocked: true, deletedAt: true },
+          });
+          if (!user || user.deletedAt) return next(new Error('auth_failed'));
+          if (user.isBlocked) return next(new Error('forbidden'));
+          (socket as AuthedSocket).data = {
+            userId: decoded.sub,
+            phone: decoded.phone,
+            roles: decoded.roles,
+          };
+          return next();
+        }
+        // Not a user token — try admin. verifyAdminAccessToken throws on any
+        // non-admin token, so a garbage token still lands in the catch below.
+        const admin = verifyAdminAccessToken(token);
+        const adminRow = await prisma.admin.findUnique({
+          where: { id: admin.sub },
+          select: { isActive: true },
         });
-        if (!user || user.deletedAt) return next(new Error('auth_failed'));
-        if (user.isBlocked) return next(new Error('forbidden'));
-        (socket as AuthedSocket).data = {
-          userId: decoded.sub,
-          phone: decoded.phone,
-          roles: decoded.roles,
-        };
-        next();
+        if (!adminRow || !adminRow.isActive) return next(new Error('auth_failed'));
+        (socket as AuthedSocket).data = { adminId: admin.sub };
+        return next();
       } catch (err) {
         logger.debug({ err }, 'socket handshake rejected');
         next(err instanceof Error ? err : new Error('auth_failed'));
@@ -92,7 +115,20 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
 
   io.on('connection', (rawSocket: Socket) => {
     const socket = rawSocket as AuthedSocket;
-    const userId = socket.data.userId;
+
+    // Admin connection: join only the admin room and register no chat/booking
+    // handlers. This is what makes notifier.ts admin:<id> emits deliverable.
+    if (socket.data.adminId) {
+      const adminId = socket.data.adminId;
+      socket.join(`admin:${adminId}`);
+      logger.debug({ adminId, socketId: socket.id }, 'admin socket connected');
+      socket.on('disconnect', (reason) => {
+        logger.debug({ adminId, socketId: socket.id, reason }, 'admin socket disconnected');
+      });
+      return;
+    }
+
+    const userId = socket.data.userId!;
     socket.join(`user:${userId}`);
 
     logger.debug({ userId, socketId: socket.id }, 'socket connected');

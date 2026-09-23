@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { logger } from '@/lib/logger.js';
+import { env } from '@/config/env.js';
 
 // Platforms we attribute presence to. Header `X-Client-Platform` carries it.
 export type Platform = 'web' | 'mini' | 'mobile';
@@ -11,10 +12,10 @@ export function normalizePlatform(raw: string | undefined | null): Platform | nu
   return (PLATFORMS as readonly string[]).includes(v) ? (v as Platform) : null;
 }
 
-// Tunables (env-overridable). These vars are NOT in src/config/env.ts's zod
-// schema, so a typo (e.g. PRESENCE_WINDOW_SEC="6o") would make Number() → NaN
-// and silently break the cutoffs. Parse defensively: fall back to the default
-// and warn if the override is present but not a positive number.
+// Tunables — validated + coerced up-front by the zod schema in config/env.ts
+// (PRESENCE_WINDOW_SEC / PRESENCE_THROTTLE_SEC / PRESENCE_CACHE_MS). We prefer
+// those, but keep a defensive fallback for any raw process.env override that
+// bypasses the schema (a typo would otherwise make Number() → NaN silently).
 function envSec(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
@@ -26,9 +27,9 @@ function envSec(name: string, fallback: number): number {
   return n;
 }
 
-const WINDOW_SEC = envSec('PRESENCE_WINDOW_SEC', 60); // "online" = seen within this
-const THROTTLE_SEC = envSec('PRESENCE_THROTTLE_SEC', 20); // skip redundant writes
-const CACHE_MS = envSec('PRESENCE_CACHE_MS', 10_000); // online-count in-memory cache
+const WINDOW_SEC = envSec('PRESENCE_WINDOW_SEC', env.PRESENCE_WINDOW_SEC); // "online" = seen within this
+const THROTTLE_SEC = envSec('PRESENCE_THROTTLE_SEC', env.PRESENCE_THROTTLE_SEC); // skip redundant writes
+const CACHE_MS = envSec('PRESENCE_CACHE_MS', env.PRESENCE_CACHE_MS); // online-count in-memory cache
 
 export interface PresenceService {
   ping(userId: string, platform: Platform | null): Promise<void>;

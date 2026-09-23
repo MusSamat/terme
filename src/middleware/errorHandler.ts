@@ -3,6 +3,7 @@ import { AppError, Errors, type ErrorCodeValue } from '@/lib/errors.js';
 import { translateError } from '@/lib/i18n.js';
 import { logger } from '@/lib/logger.js';
 import { isProd } from '@/config/env.js';
+import { captureException } from '@/lib/sentry.js';
 
 /**
  * Wrap an async handler so uncaught promise rejections flow into express's
@@ -54,8 +55,13 @@ export const globalErrorHandler: ErrorRequestHandler = (err, req, res, _next) =>
     details: appError.details,
   };
 
-  if (appError.httpStatus >= 500) logger.error(logPayload, 'request failed');
-  else logger.warn(logPayload, 'request rejected');
+  if (appError.httpStatus >= 500) {
+    logger.error(logPayload, 'request failed');
+    // Only real faults reach Sentry: every 5xx (whether a deliberate 5xx
+    // AppError or an unexpected throw mapped to INTERNAL_ERROR). Deliberate
+    // 4xx AppErrors (validation, auth, conflict …) are expected control flow.
+    captureException(err);
+  } else logger.warn(logPayload, 'request rejected');
 
   res.status(appError.httpStatus).json({
     error: {

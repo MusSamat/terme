@@ -11,6 +11,7 @@ import {
   createTelegramNotifier,
   startTelegramBot,
 } from '@/lib/telegramBot.js';
+import { initSentry, captureException } from '@/lib/sentry.js';
 
 /**
  * Entry point — boots HTTP + cron, wires graceful shutdown.
@@ -20,6 +21,9 @@ import {
 const SHUTDOWN_TIMEOUT_MS = 15_000;
 
 async function main(): Promise<void> {
+  // DSN-gated: no-op unless SENTRY_DSN is set. Init before anything can throw.
+  initSentry();
+
   const prisma = getPrisma();
   await prisma.$connect();
   logger.info('Connected to database');
@@ -118,9 +122,11 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
   process.on('unhandledRejection', (reason) => {
+    captureException(reason);
     logger.error({ reason }, 'unhandledRejection');
   });
   process.on('uncaughtException', (err) => {
+    captureException(err);
     logger.fatal({ err }, 'uncaughtException');
     void shutdown('uncaughtException');
   });

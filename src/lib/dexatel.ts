@@ -8,6 +8,9 @@ import { logger } from '@/lib/logger.js';
 //   Check: GET  /v1/verifications?code=..&phone=..   → non-empty data[] ⇒ valid (single-use)
 // Docs: https://developers.dexatel.com/docs/telegram-verify-api-overview
 const DEXATEL_BASE = 'https://api.dexatel.com/v1/verifications';
+// Plain-message endpoint — used for the SMS OTP fallback where WE own the code
+// (generated + bcrypt-hashed locally) and just need Dexatel to deliver our text.
+const DEXATEL_MESSAGES = 'https://api.dexatel.com/v1/messages';
 
 /** True when Dexatel is configured; otherwise callers use the local dev fallback. */
 export function dexatelEnabled(): boolean {
@@ -45,6 +48,31 @@ async function errorDetail(res: Response): Promise<string> {
     return body.errors?.map((e) => e.detail ?? e.title).filter(Boolean).join('; ') ?? '';
   } catch {
     return '';
+  }
+}
+
+/**
+ * Send a plain SMS with our own `text` (which already contains the OTP code we
+ * generated + hashed locally). Unlike dexatelSendVerification this does NOT use
+ * the verify flow — Dexatel just delivers the message, and consumeOtp() checks
+ * the code against our stored bcrypt hash. Used as the WhatsApp OTP fallback.
+ */
+export async function dexatelSendSms(phoneE164: string, text: string): Promise<void> {
+  const res = await dexatelFetch(DEXATEL_MESSAGES, {
+    method: 'POST',
+    body: JSON.stringify({
+      data: {
+        channel: 'SMS',
+        from: env.DEXATEL_SENDER,
+        to: [toDexatelPhone(phoneE164)],
+        text,
+      },
+    }),
+  });
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    logger.error({ phone: phoneE164, status: res.status, detail }, 'Dexatel SMS send failed');
+    throw new Error(detail || 'dexatel_sms_failed');
   }
 }
 

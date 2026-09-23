@@ -4,11 +4,11 @@ import * as password from '@/lib/bcrypt.js';
 import { generateOtp, generateUuid } from '@/lib/random.js';
 import { recordSent } from '@/lib/sms.js';
 import { whatsappEnabled, sendWhatsappOtp } from '@/lib/whatsapp.js';
-// OTP is delivered via WhatsApp for now (see deliverOtp). The other channels —
-// Telegram Gateway and Dexatel — are commented out; re-enable their imports and
-// the branches in sendTelegramOtp / consumeOtp when we bring them back.
+import { dexatelEnabled, dexatelSendSms } from '@/lib/dexatel.js';
+// OTP primary channel is WhatsApp; Dexatel SMS is the fallback (see deliverOtp).
+// The Telegram Gateway channel stays disabled — re-enable its import + branch
+// in sendTelegramOtp / consumeOtp when we bring it back.
 // import { sendGatewayVerification } from '@/lib/telegramGateway.js';
-// import { dexatelEnabled, dexatelSendVerification, dexatelCheckCode } from '@/lib/dexatel.js';
 import { logger } from '@/lib/logger.js';
 import { env } from '@/config/env.js';
 import type { Provider } from '@/lib/jwt.js';
@@ -61,17 +61,30 @@ async function createOtpRecord(prisma: PrismaClient, phone: string): Promise<str
   return code;
 }
 
-// Single OTP delivery channel. Primary: WhatsApp authentication template.
-// When WhatsApp isn't configured (dev / CI / tests) we capture the code locally
-// so those environments keep working without a live Cloud API. `text` is only
-// used by that local fallback — the WhatsApp template renders its own copy.
+// OTP delivery with fallback. Primary: WhatsApp authentication template. If the
+// WhatsApp send throws and Dexatel is configured, retry over Dexatel SMS (we own
+// the code, so `text` carries it and consumeOtp verifies our stored hash). When
+// WhatsApp isn't configured at all but Dexatel is, go straight to Dexatel SMS.
+// Finally, in non-prod with neither channel, capture the code locally so dev /
+// CI / tests keep working without a live provider.
 async function deliverOtp(phone: string, code: string, text: string): Promise<void> {
   if (whatsappEnabled()) {
-    await sendWhatsappOtp(phone, code);
+    try {
+      await sendWhatsappOtp(phone, code);
+      return;
+    } catch (err) {
+      if (!dexatelEnabled()) throw err;
+      logger.warn({ err, phone }, 'WhatsApp OTP failed — falling back to Dexatel SMS');
+      await dexatelSendSms(phone, text);
+      return;
+    }
+  }
+  if (dexatelEnabled()) {
+    await dexatelSendSms(phone, text);
     return;
   }
   recordSent(phone, text);
-  logger.info({ phone }, '[MOCK OTP] captured locally (WhatsApp not configured)');
+  logger.info({ phone }, '[MOCK OTP] captured locally (no OTP channel configured)');
 }
 
 // Called by the grammy /start handler when the user opens the `reg_` deep-link.
