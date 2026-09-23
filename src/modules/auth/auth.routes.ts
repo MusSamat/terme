@@ -23,6 +23,7 @@ import { asyncHandler } from '@/middleware/errorHandler.js';
 import { requireAdmin } from '@/middleware/auth.js';
 import { requireAuth } from '@/middleware/auth.js';
 import {
+  adminLoginLimit,
   sendOtpDailyLimit,
   sendOtpMinuteLimit,
   telegramAuthLimit,
@@ -222,24 +223,23 @@ export function createAuthRouter(
     }),
   );
 
-  // ─── Telegram registration link (deep-link → bot → OTP) ─────────────
+  // ─── Telegram registration link (RETIRED — C1) ──────────────────────
+  // This deep-link flow used to deliver the OTP to the requester's OWN Telegram
+  // chat for an arbitrary phone → account takeover. OTP is now WhatsApp-only, so
+  // the init/status endpoints are retired. Clients must use /auth/phone/send-otp
+  // (WhatsApp) or the request_contact registration flow instead. Kept as 410 so
+  // stale clients get a clear signal rather than a silent dead deep-link.
   router.post(
     '/telegram/link/init',
-    sendOtpMinuteLimit,
-    sendOtpDailyLimit,
-    validate({ body: SendOtpBody }),
-    asyncHandler(async (req, res) => {
-      const { phone } = req.body as { phone: string };
-      res.status(200).json(await service.initTelegramLink(phone));
+    asyncHandler(async (_req, _res) => {
+      throw Errors.serviceUnavailable('telegram_link_flow_retired');
     }),
   );
 
   router.get(
     '/telegram/link/status',
-    validate({ query: z.object({ token: z.string().min(1).max(100) }) }),
-    asyncHandler(async (req, res) => {
-      const { token } = req.query as { token: string };
-      res.status(200).json(await service.getTelegramLinkStatus(token));
+    asyncHandler(async (_req, _res) => {
+      throw Errors.serviceUnavailable('telegram_link_flow_retired');
     }),
   );
 
@@ -285,13 +285,36 @@ export function createAuthRouter(
   );
 
   // ─── Password reset (post-OTP flow — no current password required) ─
+  // M2: requires a FRESH OTP proof (phone + code) in addition to the access
+  // token. The code must be for the caller's own verified number; it is consumed
+  // single-use with ≤10 min freshness, and all other sessions are revoked.
   router.post(
     '/phone/reset-password',
     requireAuth,
-    validate({ body: z.object({ newPassword: z.string().min(6).max(128) }) }),
+    verifyOtpLimit,
+    validate({
+      body: z.object({
+        phone: z.string().min(5).max(20),
+        code: z.string().min(4).max(8),
+        newPassword: z.string().min(6).max(128),
+      }),
+    }),
     asyncHandler(async (req, res) => {
-      const { newPassword } = req.body as { newPassword: string };
-      await service.resetPassword(req.user!.id, newPassword);
+      const { phone, code, newPassword } = req.body as {
+        phone: string;
+        code: string;
+        newPassword: string;
+      };
+      // resetPassword's phone/code proof params are optional in the AuthService
+      // interface (kept 2-arg-assignable), so widen the type here to pass them.
+      await (
+        service.resetPassword as (
+          userId: string,
+          newPassword: string,
+          phone?: string,
+          code?: string,
+        ) => Promise<void>
+      )(req.user!.id, newPassword, phone, code);
       res.status(204).send();
     }),
   );
@@ -299,6 +322,7 @@ export function createAuthRouter(
   // ─── Admin ─────────────────────────────────────────────────────────
   router.post(
     '/admin/login',
+    adminLoginLimit,
     validate({ body: AdminLoginBody }),
     asyncHandler(async (req, res) => {
       const { email, password, totp } = req.body as {

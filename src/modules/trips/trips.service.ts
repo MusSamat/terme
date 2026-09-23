@@ -10,7 +10,7 @@ import { bishkekDayRange } from '@/lib/dates.js';
 import { logger } from '@/lib/logger.js';
 import type { Notifier } from '@/lib/notifier.js';
 import { createEngagementService } from '@/lib/engagement.js';
-import { POINTS_PER_TRIP, tierForPoints } from '@/modules/loyalty/loyalty.service.js';
+import { POINTS_PER_TRIP, awardTripCompletion } from '@/modules/loyalty/loyalty.service.js';
 import type {
   MyTripsInput,
   TripCreateInput,
@@ -183,6 +183,16 @@ export function createTripsService(
     // Phase 1: publishing needs a CAR, not verification. Verification stays an
     // optional badge (driver_profiles) — it никогда больше не гейтит публикацию.
     await assertActiveUser(driverUserId, prisma);
+    // Suspended drivers (rating < 3.0 auto-suspend, set elsewhere) cannot publish.
+    const profile = await prisma.driverProfile.findUnique({
+      where: { userId: driverUserId },
+      select: { verificationStatus: true },
+    });
+    if (profile?.verificationStatus === 'suspended') {
+      throw Errors.conflict('Driver is suspended and cannot publish trips', {
+        reason: 'driver_suspended',
+      });
+    }
     const car = body.carId
       ? await prisma.car.findFirst({
           where: { id: body.carId, userId: driverUserId, deletedAt: null },
@@ -330,13 +340,27 @@ export function createTripsService(
       status: 'active',
       seatsAvailable: { gte: query.seats },
       departureAt: { gte: new Date() },
+      // Blocked or soft-deleted drivers' trips must never surface in search.
+      driver: { isBlocked: false, deletedAt: null },
     };
+    // Preference filters live in the trips.preferences Json column
+    // (create() stores {clean, music, smoking, ac, animals, quiet, chat, women_only}).
+    // Computed up-front so applyCityFilters can preserve them: the nearby fallback
+    // re-invokes applyCityFilters to widen the city tier, and it must NOT drop
+    // women_only / no_smoking / pets (a safety bug — women_only silently lost).
+    const prefFilters: Prisma.TripWhereInput[] = [];
+    if (query.no_smoking) prefFilters.push({ preferences: { path: ['smoking'], equals: false } });
+    if (query.pets) prefFilters.push({ preferences: { path: ['animals'], equals: true } });
+    if (query.women_only) prefFilters.push({ preferences: { path: ['women_only'], equals: true } });
+
     // Mirror match: from_city = a boarding point (origin or a pickup city);
     // to_city = an alighting point (destination or a dropoff city). A dropoff
     // city does NOT make the trip boardable there, and vice versa.
     // Both filters use array sets: [city] for the exact tier, or the whole
     // raion's settlements for the nearby tier (IN uses idx_trips_search,
     // hasSome uses the GIN indexes on pickup/dropoff arrays).
+    // Rebuilds where.AND as [pref filters] + [city filters] so the city tier can
+    // be re-widened (nearby fallback) without ever losing the preference filters.
     const applyCityFilters = (fromNames: string[], toNames: string[]): void => {
       const cityFilters: Prisma.TripWhereInput[] = [];
       if (fromNames.length > 0) {
@@ -349,7 +373,8 @@ export function createTripsService(
           OR: [{ destinationCity: { in: toNames } }, { dropoffCities: { hasSome: toNames } }],
         });
       }
-      where.AND = cityFilters.length > 0 ? cityFilters : undefined;
+      const and = [...prefFilters, ...cityFilters];
+      where.AND = and.length > 0 ? and : undefined;
     };
     const expandCities = async (): Promise<[string[], string[]]> =>
       Promise.all([
@@ -365,8 +390,10 @@ export function createTripsService(
       );
     }
     if (query.date) {
-      const start = new Date(query.date);
-      const end = new Date(start.getTime() + 24 * 60 * 60_000);
+      // Use the Asia/Bishkek calendar day (same helper as the calendar endpoint),
+      // not a raw UTC 24h window — otherwise date search and the calendar disagree
+      // near the UTC/Bishkek boundary.
+      const { start, end } = bishkekDayRange(new Date(query.date));
       // Never list already-departed trips: floor the window at "now" so the
       // "today" list matches the calendar count (which is departure_at > NOW()).
       const now = new Date();
@@ -383,37 +410,28 @@ export function createTripsService(
     }
     if (query.luggage) where.luggage = query.luggage;
     if (query.only_verified || query.min_rating) {
+      // Merge onto the base driver guard (isBlocked/deletedAt) — never replace it.
       where.driver = {
+        ...(where.driver as Prisma.UserWhereInput),
         ...(query.only_verified ? { driverProfile: { verificationStatus: 'verified' } } : {}),
         ...(query.min_rating ? { rating: { gte: query.min_rating } } : {}),
       };
     }
-    // Preference filters live in the trips.preferences Json column
-    // (create() stores {clean, music, smoking, ac, animals, quiet, chat, women_only}).
-    {
-      const prefFilters: Prisma.TripWhereInput[] = [];
-      if (query.no_smoking) prefFilters.push({ preferences: { path: ['smoking'], equals: false } });
-      if (query.pets) prefFilters.push({ preferences: { path: ['animals'], equals: true } });
-      if (query.women_only) prefFilters.push({ preferences: { path: ['women_only'], equals: true } });
-      if (prefFilters.length > 0) {
-        where.AND = [...((where.AND as Prisma.TripWhereInput[] | undefined) ?? []), ...prefFilters];
-      }
-    }
 
-    // Loyalty tier priority: elite → expert → traveler → novice — prepended to
-    // all orderings so verified high-tier drivers surface naturally (§Этап 3).
-    const loyaltyOrder: Prisma.TripOrderByWithRelationInput = {
-      driver: { loyaltyTier: 'asc' }, // 'elite' < 'expert' < 'novice' < 'traveler' alphabetically,
-      // so we use a CASE expression via raw SQL; for Prisma-native sorting we
-      // rely on the secondary tier field. Proper ordering is handled by the
-      // raw-SQL search path when needed; for now this is a reasonable approximation.
-    };
+    // NB: loyalty tier is NOT a sort key here. loyaltyTier is a text column
+    // ('elite' | 'expert' | 'traveler' | 'novice') whose rank is NOT its
+    // alphabetical order ('elite' < 'expert' < 'novice' < 'traveler'), so
+    // `orderBy: { loyaltyTier: 'asc' }` mis-ranks traveler below novice. Correct
+    // tier ranking needs a CASE expression, which Prisma can't express without a
+    // raw-SQL search path (and its own cursor pagination). Driver rating is the
+    // intended quality signal and is already the primary key for rating_desc, so
+    // we drop the broken loyalty ordering rather than ship a wrong approximation.
     const orderBy: Prisma.TripOrderByWithRelationInput[] =
       query.sort === 'price_asc'
         ? [{ pricePerSeat: 'asc' }, { departureAt: 'asc' }, { id: 'asc' }]
         : query.sort === 'rating_desc'
-          ? [{ driver: { rating: 'desc' } }, loyaltyOrder, { departureAt: 'asc' }, { id: 'asc' }]
-          : [loyaltyOrder, { departureAt: 'asc' }, { id: 'asc' }];
+          ? [{ driver: { rating: 'desc' } }, { departureAt: 'asc' }, { id: 'asc' }]
+          : [{ departureAt: 'asc' }, { id: 'asc' }];
 
     const runQuery = () =>
       prisma.trip.findMany({
@@ -556,7 +574,20 @@ export function createTripsService(
     const data: Prisma.TripUpdateInput = {
       version: { increment: 1 },
     };
-    if (body.pricePerSeat !== undefined) data.pricePerSeat = body.pricePerSeat;
+    if (body.pricePerSeat !== undefined && body.pricePerSeat !== trip.pricePerSeat) {
+      // The passenger agreed to a price at booking time (bookings snapshot it
+      // separately), so the driver can't change it out from under an accepted
+      // booking. Other fields (comment/luggage/prefs) stay editable.
+      const acceptedCount = await prisma.booking.count({
+        where: { tripId: id, status: 'accepted' },
+      });
+      if (acceptedCount > 0) {
+        throw Errors.conflict('Cannot change price after a booking has been accepted', {
+          reason: 'price_locked_by_booking',
+        });
+      }
+      data.pricePerSeat = body.pricePerSeat;
+    }
     if (body.priceNegotiable !== undefined) data.priceNegotiable = body.priceNegotiable;
     if (body.luggage !== undefined) data.luggage = body.luggage;
     if (body.comment !== undefined) data.comment = redactContactInfo(body.comment).clean;
@@ -623,7 +654,8 @@ export function createTripsService(
     const trip = await prisma.trip.findUnique({ where: { id } });
     if (!trip) throw Errors.notFound('Trip');
     if (trip.driverId !== driverUserId) throw Errors.forbidden({ reason: 'not_owner' });
-    if (trip.status !== 'active') {
+    // 'direct' trips share the active lifecycle and are cancellable too.
+    if (trip.status !== 'active' && trip.status !== 'direct') {
       throw Errors.conflict('Trip is not active', { current_status: trip.status });
     }
 
@@ -695,12 +727,14 @@ export function createTripsService(
 
     switch (query.tab) {
       case 'active':
-        where.status = 'active';
+        // 'direct' trips (created from an accepted passenger-request response)
+        // share the active lifecycle — they must be visible/completable here.
+        where.status = { in: ['active', 'direct'] };
         where.departureAt = { gt: now };
         orderBy = { departureAt: 'asc' };
         break;
       case 'in_transit':
-        where.status = 'active';
+        where.status = { in: ['active', 'direct'] };
         where.departureAt = { lte: now };
         orderBy = { departureAt: 'asc' };
         break;
@@ -786,7 +820,8 @@ export function createTripsService(
     const trip = await prisma.trip.findUnique({ where: { id } });
     if (!trip) throw Errors.notFound('Trip');
     if (trip.driverId !== driverUserId) throw Errors.forbidden({ reason: 'not_owner' });
-    if (trip.status !== 'active') {
+    // 'direct' trips share the active lifecycle and are completable too.
+    if (trip.status !== 'active' && trip.status !== 'direct') {
       throw Errors.conflict('Trip is not active', { current_status: trip.status });
     }
     if (trip.departureAt > new Date()) {
@@ -795,11 +830,16 @@ export function createTripsService(
       });
     }
 
-    const acceptedPassengers = await prisma.$transaction(async (tx) => {
-      await tx.trip.update({
-        where: { id },
-        data: { status: 'completed', version: { increment: 1 } },
+    // Re-check status INSIDE the transaction: a concurrent auto_complete cron run
+    // may have already closed this trip. updateMany is a conditional CAS — if it
+    // flips 0 rows, someone else won the race and we must not double-award.
+    const result = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.trip.updateMany({
+        where: { id, status: { in: ['active', 'direct'] } },
+        data: { status: 'completed', completedAt: new Date(), version: { increment: 1 } },
       });
+      if (count !== 1) return null; // lost the race — cron already completed it
+
       const bookings = await tx.booking.findMany({
         where: { tripId: id, status: 'accepted' },
         select: { passengerId: true },
@@ -808,45 +848,32 @@ export function createTripsService(
         where: { tripId: id, status: 'accepted' },
         data: { status: 'completed' },
       });
-      await tx.driverProfile.updateMany({
-        where: { userId: driverUserId },
-        data: { totalTrips: { increment: 1 } },
-      });
-      return bookings.map((b) => b.passengerId);
+
+      const passengers = bookings.map((b) => b.passengerId);
+      // Loyalty awards inside the same tx — idempotent via the (user,trip,source)
+      // UNIQUE, and atomic with the completion so a crash can't half-apply.
+      for (const userId of [driverUserId, ...passengers]) {
+        await awardTripCompletion(tx, userId, id, POINTS_PER_TRIP);
+      }
+      return passengers;
     });
 
-    const participants = [driverUserId, ...acceptedPassengers];
+    // Someone else completed it first — treat as a no-op success (idempotent).
+    if (result === null) return { status: 'completed' };
+
+    const participants = [driverUserId, ...result];
     const payload = {
       trip_id: trip.id,
       origin_city: trip.originCity,
       destination_city: trip.destinationCity,
     };
 
-    // Notifications + loyalty (best-effort, outside transaction)
-    await Promise.all(
-      participants.map(async (userId) => {
-        if (notifier) await notifier.tripCompletedRate(userId, payload);
-
-        const alreadyAwarded = await prisma.loyaltyTransaction.findFirst({
-          where: { userId, tripId: id, source: 'trip_completed' },
-        });
-        if (alreadyAwarded) return;
-
-        await prisma.loyaltyTransaction.create({
-          data: { userId, points: POINTS_PER_TRIP, source: 'trip_completed', tripId: id },
-        });
-        const updated = await prisma.user.update({
-          where: { id: userId },
-          data: { loyaltyPoints: { increment: POINTS_PER_TRIP } },
-          select: { loyaltyPoints: true, loyaltyTier: true },
-        });
-        const newTier = tierForPoints(updated.loyaltyPoints);
-        if (newTier !== updated.loyaltyTier) {
-          await prisma.user.update({ where: { id: userId }, data: { loyaltyTier: newTier } });
-          if (notifier) await notifier.loyaltyTierChanged(userId, { tier: newTier, points: updated.loyaltyPoints });
-        }
-      }),
-    );
+    // Rating-request notifications (best-effort, outside the transaction).
+    if (notifier) {
+      await Promise.all(
+        participants.map((userId) => notifier.tripCompletedRate(userId, payload)),
+      );
+    }
 
     return { status: 'completed' };
   }

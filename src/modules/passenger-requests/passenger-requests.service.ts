@@ -247,15 +247,16 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
           ...(fromNames ? { originCity: { in: fromNames } } : {}),
           ...(toNames ? { destinationCity: { in: toNames } } : {}),
           // Single-day window (same semantics as the trips search «Сегодня» chip).
-          // Floor the window at "now" so «today» doesn't list already-departed
-          // requests — matching the calendar count (departure_date > NOW()).
+          // Day is the Asia/Bishkek calendar day (bishkekDayRange) so it matches
+          // the calendar the user sees. Floor the window at "now" so «today»
+          // doesn't list already-departed requests (departure_date > NOW()).
           ...(input.date
-            ? {
-                departureDate: {
-                  gte: new Date(input.date) > now ? new Date(input.date) : now,
-                  lt: new Date(new Date(input.date).getTime() + 24 * 60 * 60 * 1000),
-                },
-              }
+            ? (() => {
+                const { start, end } = bishkekDayRange(new Date(input.date));
+                return {
+                  departureDate: { gte: start > now ? start : now, lt: end },
+                };
+              })()
             : {}),
           ...(input.seats ? { seatsNeeded: { gte: input.seats } } : {}),
         },
@@ -318,17 +319,24 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
   }
 
   async function listMy(passengerId: string): Promise<{ data: PassengerRequestDTO[]; nextCursor: string | null }> {
+    // Bound the query so a heavy user can't pull an unbounded result set. Fetch
+    // one extra to detect a further page, then expose a cursor (created-at desc,
+    // keyed on id) without changing the response shape.
+    const LIMIT = 50;
     const rows = await prisma.passengerRequest.findMany({
       where: { passengerId },
       orderBy: [{ createdAt: 'desc' }],
+      take: LIMIT + 1,
       include: { passenger: { select: passengerSelect } },
     });
-    const likedSet = await engagement.likedIds('passenger_request', rows.map((r) => r.id), passengerId);
+    const hasMore = rows.length > LIMIT;
+    const slice = hasMore ? rows.slice(0, LIMIT) : rows;
+    const likedSet = await engagement.likedIds('passenger_request', slice.map((r) => r.id), passengerId);
     return {
       // Owner list feeds the lean request card too — no metrics rendered, so no
       // contactReveal groupBy. Full detail is fetched on open.
-      data: rows.map((r) => toDTO(r, { liked: likedSet.has(r.id), myResponse: null })),
-      nextCursor: null,
+      data: slice.map((r) => toDTO(r, { liked: likedSet.has(r.id), myResponse: null })),
+      nextCursor: hasMore ? slice[slice.length - 1]!.id : null,
     };
   }
 
@@ -523,6 +531,14 @@ export function createPassengerRequestResponsesService(prisma: PrismaClient, not
     if (!request) throw Errors.notFound('PassengerRequest');
     if (request.status !== 'open') throw Errors.conflict('Request is not open');
     if (request.passengerId === driverId) throw Errors.validation({ reason: 'cannot_respond_to_own_request' });
+    // A suspended driver may not respond to requests.
+    const driverProfile = await prisma.driverProfile.findUnique({
+      where: { userId: driverId },
+      select: { verificationStatus: true },
+    });
+    if (driverProfile?.verificationStatus === 'suspended') {
+      throw Errors.forbidden({ reason: 'driver_suspended' });
+    }
     // Phase 1: responding as a driver requires a car (not verification).
     const hasCar = await prisma.car.count({ where: { userId: driverId, deletedAt: null } });
     if (hasCar === 0) throw Errors.conflict('Add a car before responding', { reason: 'no_car' });
@@ -547,10 +563,19 @@ export function createPassengerRequestResponsesService(prisma: PrismaClient, not
         include: { driver: { select: driverResponseSelect } },
       });
     } else {
-      row = await prisma.passengerRequestResponse.create({
-        data: { requestId, driverId, price: input.price, departureTime, message: input.message ?? null, expiresAt },
-        include: { driver: { select: driverResponseSelect } },
-      });
+      try {
+        row = await prisma.passengerRequestResponse.create({
+          data: { requestId, driverId, price: input.price, departureTime, message: input.message ?? null, expiresAt },
+          include: { driver: { select: driverResponseSelect } },
+        });
+      } catch (err) {
+        // Concurrent insert raced past the dup-check above and hit the
+        // (request_id, driver_id) unique index — surface a clean 409.
+        if (typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002') {
+          throw Errors.conflict('Already responded to this request');
+        }
+        throw err;
+      }
     }
 
     const driver = await prisma.user.findUnique({ where: { id: driverId }, select: { name: true } });
@@ -586,22 +611,49 @@ export function createPassengerRequestResponsesService(prisma: PrismaClient, not
       if (!response || response.requestId !== requestId) throw Errors.notFound('Response');
       if (response.status !== 'pending') throw Errors.conflict('Response not pending', { current_status: response.status });
       if (response.expiresAt < new Date()) throw Errors.conflict('Response expired');
+      // A response can be accepted up to the 47th hour of its TTL — reject if the
+      // agreed departure time has already passed (the created trip would be born
+      // un-completable / already-departed).
+      if (response.departureTime.getTime() <= Date.now()) {
+        throw Errors.conflict('Departure time already passed', { reason: 'departure_in_past' });
+      }
 
-      const request = await tx.passengerRequest.findUnique({ where: { id: requestId } });
+      // Lock the passenger_request row FOR UPDATE so two parallel accepts
+      // (two tabs / double-tap on different responses) cannot both observe
+      // status='open' and each create a trip + accepted booking. The second
+      // waiter blocks here, then re-reads status='closed' below and 409s.
+      const locked = await tx.$queryRaw<
+        Array<{
+          id: string;
+          passenger_id: string;
+          status: string;
+          origin_city: string;
+          destination_city: string;
+          seats_needed: number;
+        }>
+      >`
+        SELECT id, passenger_id, status, origin_city, destination_city, seats_needed
+        FROM passenger_requests WHERE id = ${requestId}::uuid FOR UPDATE
+      `;
+      const request = locked[0];
       if (!request) throw Errors.notFound('PassengerRequest');
-      if (request.passengerId !== passengerId) throw Errors.forbidden();
+      if (request.passenger_id !== passengerId) throw Errors.forbidden();
       if (request.status !== 'open') throw Errors.conflict('Request already closed');
 
       // Create a Trip for the driver
       const trip = await tx.trip.create({
         data: {
           driverId: response.driverId,
-          originCity: request.originCity,
-          destinationCity: request.destinationCity,
-          originAddress: request.originCity,
+          originCity: request.origin_city,
+          destinationCity: request.destination_city,
+          originAddress: request.origin_city,
+          // Validated non-past above → the 'direct' trip is born with a future
+          // departure the trips lifecycle can complete.
           departureAt: response.departureTime,
           estimatedDurationMin: 0,
-          seatsTotal: request.seatsNeeded,
+          seatsTotal: request.seats_needed,
+          // All seats are consumed by the accepted booking created below, so a
+          // 'direct' trip carries no public availability.
           seatsAvailable: 0,
           pricePerSeat: response.price,
           // 'direct' bypasses the one-active-per-day partial unique index
@@ -616,7 +668,7 @@ export function createPassengerRequestResponsesService(prisma: PrismaClient, not
         data: {
           tripId: trip.id,
           passengerId,
-          seatsCount: request.seatsNeeded,
+          seatsCount: request.seats_needed,
           status: 'accepted',
         },
       });

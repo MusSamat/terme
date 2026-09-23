@@ -2,8 +2,6 @@ import { Router } from 'express';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import {
-  CYR_FOLD_FROM,
-  CYR_FOLD_TO,
   foldCyrillic,
   latinToCyrillic,
   layoutToCyrillic,
@@ -68,17 +66,35 @@ const POPULAR_ROUTES = [
   { from: 'Ош', to: 'Кара-Суу' },
 ];
 
+interface PopularRoute { from: string; to: string; tripCount: number; minPrice: number | null }
+
+// Process-local cache for the public, uncached /popular-routes endpoint: the
+// route set is static and trip counts change slowly, so serve at most one DB
+// query per POPULAR_CACHE_MS (mirrors the presence online-count cache pattern).
+const POPULAR_CACHE_MS = Number(process.env.POPULAR_ROUTES_CACHE_MS ?? 30_000);
+
 export function createCitiesRouter(prisma: PrismaClient): Router {
   const router = Router();
+
+  let popularRoutesCache: { value: PopularRoute[]; at: number } | null = null;
 
   // Popular routes with live trip counts — defined before '/' to avoid param conflict.
   router.get(
     '/popular-routes',
     asyncHandler(async (_req, res) => {
+      const cached = popularRoutesCache;
+      if (cached && Date.now() - cached.at < POPULAR_CACHE_MS) {
+        res.json({ data: cached.value });
+        return;
+      }
+
       // Count active trips for each predefined route in a single query.
       interface CountRow { from_city: string; to_city: string; trip_count: bigint; min_price: bigint | null }
-      const routePairs = POPULAR_ROUTES.map((r) => `('${r.from}','${r.to}')`).join(',');
-      const rows = await prisma.$queryRawUnsafe<CountRow[]>(`
+      // Parameterised tuple list via Prisma.join — no string interpolation into SQL.
+      const routePairs = Prisma.join(
+        POPULAR_ROUTES.map((r) => Prisma.sql`(${r.from}, ${r.to})`),
+      );
+      const rows = await prisma.$queryRaw<CountRow[]>`
         SELECT origin_city AS from_city, destination_city AS to_city,
                COUNT(*) AS trip_count, MIN(price_per_seat) AS min_price
         FROM trips
@@ -86,15 +102,16 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
           AND departure_at > NOW()
           AND (origin_city, destination_city) IN (${routePairs})
         GROUP BY origin_city, destination_city
-      `);
+      `;
 
       const counts = new Map(rows.map((r) => [`${r.from_city}|${r.to_city}`, { count: Number(r.trip_count), minPrice: r.min_price ? Number(r.min_price) : null }]));
 
-      const data = POPULAR_ROUTES.map((r) => {
+      const data: PopularRoute[] = POPULAR_ROUTES.map((r) => {
         const stats = counts.get(`${r.from}|${r.to}`) ?? { count: 0, minPrice: null };
         return { from: r.from, to: r.to, tripCount: stats.count, minPrice: stats.minPrice };
       });
 
+      popularRoutesCache = { value: data, at: Date.now() };
       res.json({ data });
     }),
   );
@@ -104,9 +121,11 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
     asyncHandler(async (req, res) => {
       const q = typeof req.query['q'] === 'string' ? req.query['q'].trim() : '';
       const limitRaw = parseInt(String(req.query['limit'] ?? ''), 10);
+      // Clamp to a positive range: a negative/zero limit (e.g. ?limit=-5) would
+      // reach Postgres as `LIMIT -5` and 500. Math.max floors it at 1.
       const limit = q
-        ? Math.min(isNaN(limitRaw) ? 10 : limitRaw, 20)
-        : Math.min(isNaN(limitRaw) ? 1000 : limitRaw, 1000);
+        ? Math.min(Math.max(isNaN(limitRaw) ? 10 : limitRaw, 1), 20)
+        : Math.min(Math.max(isNaN(limitRaw) ? 1000 : limitRaw, 1), 1000);
 
       if (q) {
         // Use raw SQL so we can do ILIKE on both scalar columns AND array elements
@@ -121,15 +140,18 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
           candidates.add(foldCyrillic(latinToCyrillic(q)));
           candidates.add(foldCyrillic(layoutToCyrillic(q)));
         }
+        // Filter on the pre-folded, trigram-indexed columns
+        // (name_ru_folded / name_kg_folded / prompt_folded — migration
+        // 20260923123000_cities_search_perf) instead of recomputing
+        // translate(lower(...)) per row, so the GIN pg_trgm indexes serve the
+        // substring LIKE. The columns hold the exact same folding expression,
+        // so результаты идентичны — только теперь index-backed.
         const cyrCond = Prisma.join(
           [...candidates].map(
             (c) => Prisma.sql`
-              translate(lower(name_ru), ${CYR_FOLD_FROM}, ${CYR_FOLD_TO}) LIKE ${`%${c}%`}
-              OR translate(lower(name_kg), ${CYR_FOLD_FROM}, ${CYR_FOLD_TO}) LIKE ${`%${c}%`}
-              OR EXISTS (
-                SELECT 1 FROM unnest(prompt) AS p
-                WHERE translate(lower(p), ${CYR_FOLD_FROM}, ${CYR_FOLD_TO}) LIKE ${`%${c}%`}
-              )`,
+              name_ru_folded LIKE ${`%${c}%`}
+              OR name_kg_folded LIKE ${`%${c}%`}
+              OR prompt_folded LIKE ${`%${c}%`}`,
           ),
           ' OR ',
         );
@@ -148,11 +170,11 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
             -- «район» / «город» so homonyms read clearly.
             AND type <> 'oblast'
             AND (
-              name_en ILIKE ${pattern}
-              OR EXISTS (
-                SELECT 1 FROM unnest(prompt) AS p
-                WHERE p ILIKE ${pattern}
-              )
+              -- name_en_lower / prompt_folded are trigram-indexed; ILIKE is
+              -- just case-insensitive LIKE, so LIKE lower(pattern) on the
+              -- lowered column is equivalent and index-backed.
+              name_en_lower LIKE ${pattern.toLowerCase()}
+              OR prompt_folded LIKE ${pattern.toLowerCase()}
               OR ${cyrCond}
             )
           ORDER BY priority DESC, name_ru ASC

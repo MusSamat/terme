@@ -106,15 +106,16 @@ describe('POST /v1/users/me/password — change password', () => {
 describe('POST /v1/auth/phone/reset-password — forgot password (post-OTP)', () => {
   const PHONE = '+996700200002';
 
-  it('sets a new password after re-auth; the new one logs in', async () => {
-    // In production the caller first proves identity via a Telegram bot OTP and
-    // gets a session; here we use that session token directly.
+  it('sets a new password after a fresh OTP proof; the new one logs in', async () => {
+    // M2: reset now requires a FRESH OTP proof (phone + code) for the caller's
+    // own number, on top of the session token. Seed a valid OTP and pass it.
     const { token } = await registerUser(PHONE, 'forgotten1');
+    await seedOtp(PHONE, '654321');
 
     const res = await request(app)
       .post('/v1/auth/phone/reset-password')
       .set('Authorization', `Bearer ${token}`)
-      .send({ newPassword: 'recovered1' });
+      .send({ phone: PHONE, code: '654321', newPassword: 'recovered1' });
     expect(res.status).toBe(204);
 
     expect((await login(PHONE, 'recovered1')).status).toBe(200);

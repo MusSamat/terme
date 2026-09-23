@@ -15,6 +15,45 @@ import type { AdminAuthResult, AuthResult } from './auth.types.js';
 import type { createOtpMethods } from './auth.otp.js';
 import { PHONE_CHANGE_DAILY_CAP } from './auth.constants.js';
 
+// L1: a cost-12 dummy bcrypt hash of a random string. Comparing against this on
+// unknown accounts costs the SAME as a real verify (cost 12), so response timing
+// no longer leaks whether an email/phone exists. (The old '$2a$04$…' placeholder
+// verified at cost 4 — an order of magnitude faster — which was a timing oracle.)
+// Value is a valid bcrypt hash that nothing can match (random plaintext).
+const DUMMY_BCRYPT_HASH_COST12 =
+  '$2a$12$C6UzMDM.H6dfI/f/IKcEeODuLXk1UT9UyN3Ci7q2ZfP8i8VqQ0y8W';
+
+// H3: in-memory admin-login lockout. After ADMIN_LOGIN_MAX_FAILS failed attempts
+// (bad password OR bad TOTP) for an email, further attempts are rejected for
+// ADMIN_LOCK_MS regardless of credentials. Single-process MVP (matches the
+// in-memory rate limiter). Cleared on a successful login.
+const ADMIN_LOGIN_MAX_FAILS = 5;
+const ADMIN_LOCK_MS = 15 * 60_000;
+const adminLoginFails = new Map<string, { count: number; firstAt: number; lockedUntil: number }>();
+
+function adminLockState(email: string): { count: number; firstAt: number; lockedUntil: number } {
+  const now = Date.now();
+  const cur = adminLoginFails.get(email);
+  if (!cur) return { count: 0, firstAt: now, lockedUntil: 0 };
+  // Reset the window once the lock (or the counting window) has elapsed.
+  if (cur.lockedUntil && now >= cur.lockedUntil) {
+    adminLoginFails.delete(email);
+    return { count: 0, firstAt: now, lockedUntil: 0 };
+  }
+  if (!cur.lockedUntil && now - cur.firstAt >= ADMIN_LOCK_MS) {
+    adminLoginFails.delete(email);
+    return { count: 0, firstAt: now, lockedUntil: 0 };
+  }
+  return cur;
+}
+
+function recordAdminFail(email: string): void {
+  const s = adminLockState(email);
+  const count = s.count + 1;
+  const lockedUntil = count >= ADMIN_LOGIN_MAX_FAILS ? Date.now() + ADMIN_LOCK_MS : 0;
+  adminLoginFails.set(email, { count, firstAt: s.firstAt, lockedUntil });
+}
+
 export function createPasswordMethods(
   prisma: PrismaClient,
   otp: ReturnType<typeof createOtpMethods>,
@@ -46,8 +85,24 @@ export function createPasswordMethods(
     });
   }
 
-  async function resetPassword(userId: string, newPassword: string): Promise<void> {
+  // M2: reset-password now demands a FRESH OTP proof — a valid access token alone
+  // no longer authorises a password reset (a stolen/leaked access token could
+  // otherwise take over the account with no possession check). `phone` + `code`
+  // are verified via consumeOtp (single-use, freshness ≤ OTP_TTL = 10 min). The
+  // OTP must be for the caller's OWN verified number. After the change we revoke
+  // ALL of the user's other sessions. `phone`/`code` are optional in the type to
+  // stay assignable to the AuthService interface, but are required at runtime.
+  async function resetPassword(
+    userId: string,
+    newPassword: string,
+    phone?: string,
+    code?: string,
+  ): Promise<void> {
     const user = await assertActiveUser(userId, prisma);
+    if (!phone || !code) throw Errors.unauthorized({ reason: 'otp_proof_required' });
+    if (phone !== user.phone) throw Errors.unauthorized({ reason: 'otp_phone_mismatch' });
+    // Consume the OTP first — single-use, enforces freshness and attempt caps.
+    await otp.consumeOtp(phone, code);
     const hash = await password.hash(newPassword);
     await prisma.$transaction(async (tx) => {
       await tx.user.update({
@@ -58,6 +113,11 @@ export function createPasswordMethods(
         where: { provider_providerUserId: { provider: 'phone', providerUserId: user.phone } },
         update: {},
         create: { userId, provider: 'phone', providerUserId: user.phone },
+      });
+      // logoutAll other sessions — a reset is a security event.
+      await tx.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
       });
     });
   }
@@ -183,19 +243,29 @@ export function createPasswordMethods(
     plainPassword: string,
     totp?: string,
   ): Promise<AdminAuthResult> {
-    const admin = await prisma.admin.findUnique({ where: { email: email.toLowerCase() } });
-    const compareAgainst =
-      admin?.passwordHash ?? '$2a$04$00000000000000000000000000000000000000000000000000000';
+    const normalizedEmail = email.toLowerCase();
+    // H3: reject early while locked out, without touching the DB or bcrypt.
+    if (adminLockState(normalizedEmail).lockedUntil > Date.now()) {
+      throw Errors.rateLimited({ bucket: 'admin_login', reason: 'locked_out' });
+    }
+    const admin = await prisma.admin.findUnique({ where: { email: normalizedEmail } });
+    // L1: cost-12 dummy hash so unknown-email timing matches a real verify.
+    const compareAgainst = admin?.passwordHash ?? DUMMY_BCRYPT_HASH_COST12;
     const passwordOk = await password.verify(plainPassword, compareAgainst);
     if (!admin || !passwordOk || !admin.isActive) {
+      recordAdminFail(normalizedEmail);
       throw Errors.unauthorized({ reason: 'admin_credentials' });
     }
     if (admin.totpEnabled) {
       if (!admin.totpSecret) throw Errors.internal('TOTP misconfigured');
       if (!totp) throw Errors.unauthorized({ reason: 'totp_required' });
       const ok = authenticator.verify({ token: totp, secret: admin.totpSecret });
-      if (!ok) throw Errors.unauthorized({ reason: 'totp_invalid' });
+      if (!ok) {
+        recordAdminFail(normalizedEmail);
+        throw Errors.unauthorized({ reason: 'totp_invalid' });
+      }
     }
+    adminLoginFails.delete(normalizedEmail);
     await prisma.admin.update({ where: { id: admin.id }, data: { lastLoginAt: new Date() } });
     const adminRole = admin.role as 'admin' | 'superadmin';
     const tokenPayload = { sub: admin.id, email: admin.email, role: adminRole };
@@ -226,6 +296,9 @@ export function createPasswordMethods(
     if (!admin || !admin.isActive) throw Errors.unauthorized({ reason: 'admin_credentials' });
     const ok = await password.verify(currentPassword, admin.passwordHash);
     if (!ok) throw Errors.unauthorized({ reason: 'admin_credentials' });
+    // M1: this update bumps `updated_at` (@updatedAt). adminRefresh rejects any
+    // admin refresh token whose `iat` predates updated_at, so changing the
+    // password revokes ALL outstanding admin refresh tokens (no per-token store).
     await prisma.admin.update({
       where: { id: adminId },
       data: { passwordHash: await password.hash(newPassword), mustChangePassword: false },

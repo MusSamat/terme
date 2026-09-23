@@ -56,6 +56,25 @@ export const telegramAuthLimit = build({
   limit: 10,
 });
 
+/**
+ * H3: strict brute-force cap on /auth/admin/login. Keyed on email+IP so one
+ * attacker IP can't spray many admin emails and a distributed attack on one
+ * email is also slowed. 5 attempts / 15 min. Only failed attempts count toward
+ * the cap (a successful 2xx login shouldn't consume quota).
+ */
+const adminLoginKey = (req: Request): string => {
+  const body = req.body as { email?: string } | undefined;
+  const email = (body?.email ?? '').toLowerCase().slice(0, 200);
+  return `${email}|${ipKey(req)}`;
+};
+export const adminLoginLimit = build({
+  name: 'admin_login',
+  windowMs: 15 * 60_000,
+  limit: 5,
+  keyGenerator: adminLoginKey,
+  skipFailedRequests: false,
+});
+
 // ─── Phone-based (OTP) ────────────────────────────────────────────────
 // Limits are enforced in the service layer against otp_codes table — this is
 // a safety net in front. It keys on phone to defend across IP rotation.

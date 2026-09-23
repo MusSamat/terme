@@ -244,10 +244,18 @@ export function createInProcessNotifier(prisma: PrismaClient, io: IoServer): Not
         where: { isActive: true },
         select: { id: true },
       });
-      // Admin IDs don't live in `users`, so we don't persist per-admin rows in
-      // `notifications` (whose FK is users). Instead, rely on Socket.IO rooms —
-      // admins use a different auth, so they join `admin:<id>` rooms when they
-      // connect via the admin panel.
+      // Admin IDs don't live in `users`, so we can't persist per-admin rows in
+      // `notifications` (whose FK is users). No admin socket ever joins the
+      // `admin:<id>` rooms either — the handshake only accepts user tokens — so
+      // a pure socket emit would silently vanish. Until an admin channel exists
+      // (durable admin_notifications table / email — Stage 2), log every
+      // admin-targeted event at WARN so it's captured in structured logs and
+      // never lost, then keep the socket emit as best-effort for when/if an
+      // admin room does get wired up.
+      logger.warn(
+        { type, payload, adminCount: admins.length },
+        'admin notification (no durable admin channel yet — emitted to admin rooms best-effort)',
+      );
       for (const a of admins) io.to(`admin:${a.id}`).emit('notification:new', { type, payload });
     },
   };

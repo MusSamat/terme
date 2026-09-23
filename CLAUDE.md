@@ -26,12 +26,15 @@ Prisma 5.x              — ORM, все запросы через него
 PostgreSQL 16           — единственная БД
 Socket.IO 4.x           — WebSocket (отдельный процесс от API)
 Zod 3.x                 — валидация входящих данных
-jsonwebtoken 9.x        — JWT подпись/верификация
-bcrypt 5.x              — хеши паролей и OTP
+jsonwebtoken 9.x        — JWT подпись/верификация (наши токены)
+jose                    — верификация внешних JWT (Google/Apple JWKS)
+bcryptjs                — хеши паролей и OTP (не нативный bcrypt)
+otplib                  — TOTP для админов
+grammy                  — Telegram Bot API
 Pino 9.x                — логирование (JSON, structured)
 node-cron 3.x           — cron jobs
-axios 1.x               — внешние HTTP запросы
-Vitest 1.x              — тесты
+fetch (нативный)        — внешние HTTP (WhatsApp Cloud API и др.); axios НЕ используется
+Vitest                  — тесты
 ```
 
 **Запрещено добавлять без явного запроса:**
@@ -76,15 +79,18 @@ image_picker + flutter_image_compress — фото документов
 ```
 /backend
   /src
-    /routes          — Express роутеры (тонкие, только HTTP)
-    /controllers     — входная точка, парсинг req, вызов сервиса
-    /services        — бизнес-логика (здесь всё)
-    /repositories    — Prisma запросы (только DB, без логики)
-    /middleware      — auth, rateLimit, validate
-    /lib             — утилиты (jwt, bcrypt, sms, telegram)
-    /types           — TypeScript типы
-    /jobs            — cron задачи
-    /socket          — Socket.IO handlers (отдельный процесс)
+    /modules         — код по фичам: <name>/<name>.routes.ts + <name>.service.ts + <name>.schemas.ts
+                       .routes.ts  — Express роутер (HTTP + Zod валидация, тонкий)
+                       .service.ts — бизнес-логика + прямые Prisma запросы
+                       .schemas.ts — Zod схемы входящих данных
+    /middleware      — auth, rateLimit, validate, errorHandler, requestContext
+    /lib             — утилиты (jwt, bcrypt, whatsapp, telegram, i18n, errors)
+    /config          — env (Zod-валидированный process.env)
+    /cron            — cron задачи (jobs/)
+    /ws              — Socket.IO handlers (отдельный процесс)
+    /locales         — ru.json, kg.json (тексты ошибок)
+    server.ts        — createApp(prisma, notifier, bot): монтирует все роутеры
+    openapi.ts       — hand-authored OpenAPI спека
   prisma/
     schema.prisma
     migrations/
@@ -109,11 +115,13 @@ image_picker + flutter_image_compress — фото документов
     /l10n            — ru.json, ky.json
 ```
 
-**Правило слоёв:**
-- Route → Controller → Service → Repository
-- Service НЕ знает про `req`/`res`
-- Repository НЕ содержит бизнес-логику
-- Controller НЕ делает прямые Prisma запросы
+**Правило слоёв (Controller/Repository слоёв НЕТ):**
+- Route (`*.routes.ts`) → Service (`*.service.ts`). Роутер парсит/валидирует
+  req (Zod) и зовёт сервис; сервис держит бизнес-логику и сам ходит в Prisma.
+- Service НЕ знает про `req`/`res` — принимает уже распарсенные аргументы.
+- DI через фабрики: `create<X>Service(prisma, ...)` и `create<X>Router(...)`,
+  всё собирается в `createApp()` (`server.ts`). Никаких глобальных синглтонов.
+- Prisma-запросы живут в сервисе (отдельного repository-слоя нет).
 
 ---
 
@@ -170,18 +178,25 @@ await prisma.trip.update(...); // race condition!
 ## 5. Auth — строгие правила
 
 ```
-Access token:  15 минут, в памяти (не localStorage)
+Access token:  15 минут (JWT_ACCESS_TTL_MIN), в памяти (не localStorage)
 Refresh token: продлевается при активности, разлогин через 30 дней без входа
 OTP:           bcrypt(code) в БД, НЕ plain text
-SMS:           только при регистрации и смене номера — НИКОГДА при повторном входе
+OTP-канал:     WhatsApp (шаблон terme_otp) — lib/whatsapp.sendWhatsappOtp.
+               НЕ отправляется при повторном входе (phone+password), только при
+               регистрации / привязке / смене номера.
+Telegram Mini App: вход по подписанному initData — POST /auth/telegram
+               (провизорный токен, если телефон ещё не привязан).
 ```
 
-**Token Reuse Detection — обязателен:**
+**Token Reuse Detection — grace-окно + revoke-all вне него (auth.session.ts):**
 ```typescript
-// При /auth/refresh — если токен уже used_at IS NOT NULL:
-// → revoke ALL токены пользователя
-// → уведомить пользователя
-// → вернуть 401 TOKEN_REUSE_DETECTED
+// При /auth/refresh, если refresh-токен уже ротирован (used):
+//   • в пределах GRACE_MS (60s) → ретрай/гонка клиента: вернуть ТУ ЖЕ ранее
+//     выданную пару из кэша (по rotatedTokenId), НЕ минтить новую и НЕ
+//     разлогинивать (иначе ложные логауты при двойном запросе клиента).
+//   • вне grace-окна → реальный reuse украденного токена: revoke ВСЕХ refresh
+//     токенов пользователя + 401 { code: 'TOKEN_REUSE_DETECTED' } + лог-событие.
+// Клиенты (web/mobile) обязаны трактовать TOKEN_REUSE_DETECTED как форс-логаут.
 ```
 
 **Deferred Action — sessionStorage, TTL 15 минут:**
@@ -196,9 +211,9 @@ SMS:           только при регистрации и смене номе
 ## 6. API — соглашения
 
 ```
-Base URL:     /api/v1
+Base URL:     /v1  (см. server.ts; /health — вне версии)
 Авторизация:  Authorization: Bearer <access_token>
-Ошибки:       { error: { code: "UPPER_SNAKE", message: "...", message_ky: "..." } }
+Ошибки:       { error: { code: "UPPER_SNAKE", message: "...", message_kg?, details?, request_id } }
 Пагинация:    cursor-based: ?cursor=xxx&limit=20
 Идемпотент:   Idempotency-Key header для POST /trips, POST /bookings
 Даты:         ISO 8601 UTC везде
@@ -206,8 +221,11 @@ Base URL:     /api/v1
 
 **Формат ошибки — всегда так:**
 ```typescript
-// src/lib/errors.ts — используй готовый, не изобретай новый
-throw new AppError("SEATS_NOT_AVAILABLE", 409, "Мест больше нет", "Бош орундар жок");
+// src/lib/errors.ts — сигнатура: AppError(code, messageFallback, details?).
+// HTTP-статус берётся из таблицы кодов, локализация — через locales/*.json.
+// Обычно зовём готовый хелпер из Errors, а не конструктор напрямую:
+throw Errors.seatsNotAvailable();           // 409, SEATS_NOT_AVAILABLE
+throw new AppError('CONFLICT', 'Мест больше нет', { tripId });  // если нужен свой message
 ```
 
 ---
@@ -227,10 +245,13 @@ t('trips.create.title')
 // errors.SEATS_NOT_AVAILABLE
 ```
 
-При добавлении нового текста:
+Локали: `ru` и `kg` (см. lib/i18n.ts; legacy-тег `ky` в Accept-Language
+маппится на `kg`). Файл `src/locales/ky.json` — устаревший, не используется.
+
+Backend: `src/locales/{ru,kg}.json` хранят только тексты ошибок (`errors.<CODE>`),
+резолвятся в errorHandler по Accept-Language. При добавлении нового текста:
 1. Добавь ключ в `locales/ru.json`
-2. Добавь ключ в `locales/ky.json` (можно заглушку = ru текст)
-3. Используй через `t()`
+2. Добавь ключ в `locales/kg.json` (можно заглушку = ru текст)
 
 ---
 
@@ -278,11 +299,12 @@ t('trips.create.title')
 
 ```
 [ ] TypeScript strict: нет any, нет ts-ignore без объяснения
-[ ] Zod валидация на всех входящих данных (Controller уровень)
-[ ] Ошибки через AppError (не throw new Error("string"))
+[ ] Zod валидация на всех входящих данных (уровень *.routes.ts)
+[ ] Ошибки через AppError / Errors.* (не throw new Error("string"))
 [ ] Логирование через Pino (не console.log)
-[ ] Новые ключи локализации добавлены в ru.json и ky.json
-[ ] Нет прямых Prisma вызовов в Controller (только через Service)
+[ ] Новые ключи локализации добавлены в ru.json и kg.json
+[ ] Prisma-вызовы только в *.service.ts (роутер не ходит в Prisma напрямую)
+[ ] Новый эндпоинт добавлен в src/openapi.ts (или в KNOWN_GAPS теста покрытия)
 [ ] Транзакция там где нужна атомарность
 [ ] Rate limit проверен для новых публичных эндпоинтов
 [ ] idempotency_key на POST /trips и POST /bookings
@@ -303,7 +325,7 @@ t('trips.create.title')
 ❌ Менять schema.prisma без создания миграции
 ❌ Прямой SQL без параметров — SQL injection
 ❌ sessionStorage для refresh токена — только memory/secure storage
-❌ Отправлять SMS при повторном входе — только при регистрации
+❌ Слать OTP (WhatsApp) при повторном входе — вход по phone+password без OTP
 ```
 
 ---
@@ -311,8 +333,7 @@ t('trips.create.title')
 ## 12. Быстрый справочник команд
 
 ```bash
-# Backend
-cd backend
+# Backend — корень ЭТОГО репозитория (mini-app и mobile — отдельные репо)
 npx prisma migrate dev --name "описание"   # новая миграция
 npx prisma generate                         # regenerate client
 npx prisma studio                           # GUI для БД

@@ -49,7 +49,10 @@ const EnvSchema = z.object({
 
   // OAuth — audience / client IDs to match in verified JWTs. Comma-separated
   // so the Flutter app and the Web client can use different client ids.
-  GOOGLE_CLIENT_IDS: z.string().default('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'),
+  // H1: no hardcoded secret default. The real value MUST come from the env and
+  // any value ever committed here is considered leaked and must be rotated in
+  // Google Cloud Console. Empty default → the verifier fails closed (rejects).
+  GOOGLE_CLIENT_IDS: z.string().default(''),
   APPLE_CLIENT_IDS: z.string().default(''),
 
   // WhatsApp Cloud API (Meta). All optional/defaulted so a fresh checkout boots
@@ -64,6 +67,13 @@ const EnvSchema = z.object({
   // approved in Meta in this language with a body param + copy-code URL button.
   WHATSAPP_OTP_TEMPLATE: z.string().default('terme_otp'),
   WHATSAPP_OTP_LANG: z.string().default('ru'),
+
+  // L3: only expose debug_code / local OTP capture when explicitly enabled.
+  // NEVER set to true in production — it returns the OTP in the API response.
+  OTP_DEBUG: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 
   SMS_PROVIDER: z.enum(['mock', 'mega', 'nikita']).default('mock'),
   SMS_API_URL: z.string().default(''),
@@ -109,6 +119,19 @@ function parseEnv(): Env {
       .join('\n');
     // Use stderr directly — logger isn't initialised yet.
     process.stderr.write(`\n✗ Invalid environment variables:\n${issues}\n\n`);
+    process.exit(1);
+  }
+  // N14: in production OTP MUST have a real delivery channel. Without WhatsApp
+  // credentials deliverOtp() silently falls back to capturing the code in logs
+  // (a plaintext-OTP leak) — fail fast at startup instead.
+  if (
+    parsed.data.NODE_ENV === 'production' &&
+    (!parsed.data.WHATSAPP_ACCESS_TOKEN || !parsed.data.WHATSAPP_PHONE_NUMBER_ID)
+  ) {
+    process.stderr.write(
+      '\n✗ Production requires WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID ' +
+        'so OTP is delivered via WhatsApp and never captured to logs.\n\n',
+    );
     process.exit(1);
   }
   return parsed.data;

@@ -88,7 +88,7 @@ describe('AUTH-04 — Google OAuth rejects invalid token', () => {
 
 // ─── AUTH-06: Token Reuse Detection ─────────────────────────────────────
 describe('AUTH-06 — Token Reuse Detection', () => {
-  it('second use of a rotated refresh revokes all user sessions + notifies', async () => {
+  it('reuse of a rotated refresh outside the grace window revokes all sessions + alerts', async () => {
     const phone = '+996700000601';
     await seedOtp(phone, '606060');
     const login = await request(app)
@@ -103,7 +103,14 @@ describe('AUTH-06 — Token Reuse Detection', () => {
       .send({ refreshToken: firstRefresh });
     expect(ok.status).toBe(200);
 
-    // Replay the SAME (now-used) refresh → trips reuse detection.
+    // Age the rotated token past the 60s grace window so the replay is treated
+    // as real reuse (not a legit client retry).
+    await testPrisma.refreshToken.updateMany({
+      where: { userId: login.body.user.id, usedAt: { not: null } },
+      data: { usedAt: new Date(Date.now() - 2 * 60_000) },
+    });
+
+    // Replay the SAME (now-used, aged) refresh → trips reuse detection.
     const replay = await request(app)
       .post('/v1/auth/refresh')
       .send({ refreshToken: firstRefresh });
@@ -374,10 +381,14 @@ describe('AUTH-DEDUP — Telegram and phone resolve to a single account', () => 
     expect(placeholder.deletedAt).not.toBeNull();
   });
 
-  it('registering via the Telegram link flow binds telegramId so later login finds one account', async () => {
+  it('does NOT auto-bind telegramId from a link token on phone verify (C1 takeover hardening)', async () => {
     const phone = '+996700002002';
 
-    // The bot delivered the code via the link flow → token carries the telegramId.
+    // Security regression guard: even if a telegramLinkToken carrying a telegramId
+    // exists for this phone, /auth/phone/verify must NOT bind that telegramId to
+    // the account. That auto-bind was the account-takeover vector (an attacker
+    // links a victim's phone to the attacker's Telegram). Telegram is bound ONLY
+    // via signed initData (/auth/telegram) or a proven request_contact.
     await testPrisma.telegramLinkToken.create({
       data: {
         token: 'dedup-tok-2002',
@@ -392,10 +403,6 @@ describe('AUTH-DEDUP — Telegram and phone resolve to a single account', () => 
     expect(reg.status).toBe(200);
 
     const u = await testPrisma.user.findFirstOrThrow({ where: { phone } });
-    expect(u.telegramId).toBe(2002n);
-
-    // A later Telegram login resolves to the SAME account — no duplicate.
-    const tgLogin = await request(app).post('/v1/auth/telegram').send({ initData: tgInitData(2002) });
-    expect(tgLogin.body.user.id).toBe(u.id);
+    expect(u.telegramId).toBeNull();
   });
 });

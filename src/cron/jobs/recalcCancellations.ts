@@ -9,16 +9,25 @@ export const recalcCancellationsJob: Job = {
   schedule: '0 3 * * *',
   maxRuntimeSec: 120,
   async run(prisma) {
+    // Only write rows whose counter actually changed — IS DISTINCT FROM guards
+    // against rewriting every driver_profile nightly (needless WAL / bloat).
     const result = await prisma.$executeRaw`
       UPDATE driver_profiles dp
-      SET cancellations_30d = (
-        SELECT COUNT(*)
-        FROM bookings b
-        JOIN trips t ON t.id = b.trip_id
-        WHERE t.driver_id = dp.user_id
-          AND b.status = 'cancelled_by_driver'
-          AND b.cancelled_at >= NOW() - INTERVAL '30 days'
-      )
+      SET cancellations_30d = sub.cnt
+      FROM (
+        SELECT dp2.user_id,
+               (
+                 SELECT COUNT(*)
+                 FROM bookings b
+                 JOIN trips t ON t.id = b.trip_id
+                 WHERE t.driver_id = dp2.user_id
+                   AND b.status = 'cancelled_by_driver'
+                   AND b.cancelled_at >= NOW() - INTERVAL '30 days'
+               ) AS cnt
+        FROM driver_profiles dp2
+      ) sub
+      WHERE dp.user_id = sub.user_id
+        AND dp.cancellations_30d IS DISTINCT FROM sub.cnt
     `;
     logger.info({ updated: result }, 'recalc_cancellations_30d: done');
   },

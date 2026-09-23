@@ -1,6 +1,6 @@
 import type { Job } from '@/cron/scheduler.js';
 import { logger } from '@/lib/logger.js';
-import { POINTS_PER_TRIP, tierForPoints } from '@/modules/loyalty/loyalty.service.js';
+import { POINTS_PER_TRIP, awardTripCompletion } from '@/modules/loyalty/loyalty.service.js';
 
 // TZ §10.3 auto-close: active trips where (departure + estimated_duration + 2h)
 // is in the past become "completed", and both parties get a rating-request
@@ -20,9 +20,10 @@ export const autoCompleteTripsJob: Job = {
     const closed = await prisma.$queryRaw<Array<{ id: string; driver_id: string }>>`
       UPDATE trips
       SET status = 'completed',
+          completed_at = NOW(),
           updated_at = NOW(),
           version = version + 1
-      WHERE status = 'active'
+      WHERE status IN ('active', 'direct')
         AND departure_at + (estimated_duration_min::text || ' minutes')::interval
             + INTERVAL '2 hours' < NOW()
       RETURNING id, driver_id
@@ -54,13 +55,11 @@ export const autoCompleteTripsJob: Job = {
       data: { status: 'completed' },
     });
 
-    // Bump driver totals and award loyalty points to all participants.
+    // Award loyalty points (and bump driver totalTrips) for all participants.
+    // Each trip's awards run in one transaction so a crash can't half-apply.
+    // awardTripCompletion is idempotent via the (userId, tripId, source) UNIQUE,
+    // so a re-run or a race with manual complete() never double-awards.
     for (const { id: tripId, driver_id } of closed) {
-      await prisma.driverProfile.updateMany({
-        where: { userId: driver_id },
-        data: { totalTrips: { increment: 1 } },
-      });
-
       // Collect all participants: driver + accepted passengers.
       const participants = await prisma.$queryRaw<Array<{ user_id: string }>>`
         SELECT ${driver_id}::uuid AS user_id
@@ -69,33 +68,13 @@ export const autoCompleteTripsJob: Job = {
           WHERE trip_id = ${tripId}::uuid AND status = 'completed'
       `;
 
-      for (const { user_id } of participants) {
-        // Idempotent upsert of loyalty transaction.
-        const alreadyAwarded = await prisma.loyaltyTransaction.findFirst({
-          where: { userId: user_id, tripId, source: 'trip_completed' },
-        });
-        if (alreadyAwarded) continue;
-
-        await prisma.loyaltyTransaction.create({
-          data: { userId: user_id, points: POINTS_PER_TRIP, source: 'trip_completed', tripId },
-        });
-
-        const updated = await prisma.user.update({
-          where: { id: user_id },
-          data: { loyaltyPoints: { increment: POINTS_PER_TRIP } },
-          select: { loyaltyPoints: true, loyaltyTier: true },
-        });
-
-        const newTier = tierForPoints(updated.loyaltyPoints);
-        if (newTier !== updated.loyaltyTier) {
-          await prisma.user.update({
-            where: { id: user_id },
-            data: { loyaltyTier: newTier },
-          });
-          // Notifier is not wired into cron jobs — tier changes will surface on
-          // next GET /loyalty/status or via the notification on next login.
+      await prisma.$transaction(async (tx) => {
+        for (const { user_id } of participants) {
+          await awardTripCompletion(tx, user_id, tripId, POINTS_PER_TRIP);
+          // Notifier is not wired into cron jobs — tier changes surface on the
+          // next GET /loyalty/status.
         }
-      }
+      });
     }
 
     logger.info({ count: closed.length }, 'auto_complete_trips: closed trips');

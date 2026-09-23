@@ -26,6 +26,7 @@ import type { Notifier } from '@/lib/notifier.js';
  */
 
 const CHAT_SEND_LIMIT_PER_MIN = 20;
+const TYPING_LIMIT_PER_10S = 10;
 
 interface AuthedSocket extends Socket {
   data: {
@@ -61,21 +62,32 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
   const bookings = createBookingsService(prisma, notifier);
 
   // ─── Handshake auth ───────────────────────────────────────────────
+  // Mirrors REST requireAuth: verify the JWT signature AND confirm the user is
+  // still active (not blocked, not soft-deleted). A valid-but-stale token from
+  // a since-blocked user must not open a socket.
   io.use((socket, next) => {
-    try {
-      const token = extractToken(socket);
-      if (!token) return next(new Error('auth_required'));
-      const decoded = verifyAccessToken(token);
-      (socket as AuthedSocket).data = {
-        userId: decoded.sub,
-        phone: decoded.phone,
-        roles: decoded.roles,
-      };
-      next();
-    } catch (err) {
-      logger.debug({ err }, 'socket handshake rejected');
-      next(err instanceof Error ? err : new Error('auth_failed'));
-    }
+    void (async () => {
+      try {
+        const token = extractToken(socket);
+        if (!token) return next(new Error('auth_required'));
+        const decoded = verifyAccessToken(token);
+        const user = await prisma.user.findUnique({
+          where: { id: decoded.sub },
+          select: { isBlocked: true, deletedAt: true },
+        });
+        if (!user || user.deletedAt) return next(new Error('auth_failed'));
+        if (user.isBlocked) return next(new Error('forbidden'));
+        (socket as AuthedSocket).data = {
+          userId: decoded.sub,
+          phone: decoded.phone,
+          roles: decoded.roles,
+        };
+        next();
+      } catch (err) {
+        logger.debug({ err }, 'socket handshake rejected');
+        next(err instanceof Error ? err : new Error('auth_failed'));
+      }
+    })();
   });
 
   io.on('connection', (rawSocket: Socket) => {
@@ -171,7 +183,23 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
       void socket.leave(`chat:${booking_id}`);
     });
 
+    // typing has its own sliding-window limiter — clients fire it on every
+    // keystroke, so cap the relay rate to avoid flooding the room.
+    const typingTimes: number[] = [];
+    const canType = (): boolean => {
+      const now = Date.now();
+      while (typingTimes.length && now - typingTimes[0]! > 10_000) typingTimes.shift();
+      if (typingTimes.length >= TYPING_LIMIT_PER_10S) return false;
+      typingTimes.push(now);
+      return true;
+    };
     socket.on('chat:typing', ({ booking_id }: { booking_id: string }) => {
+      if (typeof booking_id !== 'string' || !booking_id) return;
+      // Only relay for rooms this socket actually joined (chat:join already
+      // verified membership + status) — otherwise a client could spoof typing
+      // into arbitrary chats it isn't part of.
+      if (!socket.rooms.has(`chat:${booking_id}`)) return;
+      if (!canType()) return;
       // Broadcast to the room, except the sender.
       socket.to(`chat:${booking_id}`).emit('chat:typing', { user_id: userId });
     });

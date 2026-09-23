@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { AppError, Errors, publicPhone } from '@/lib/errors.js';
 import { toFileUrl } from '@/lib/uploads.js';
 import { cursorArgs, sliceAndNext } from '@/lib/pagination.js';
+import { bishkekDayRange } from '@/lib/dates.js';
 import { logger } from '@/lib/logger.js';
 import type { Notifier, PublicBooking, PublicTrip } from '@/lib/notifier.js';
 import type {
@@ -24,10 +25,13 @@ const LATE_CANCEL_CUTOFF_HOURS = 2;
 const POST_COMPLETION_PHONE_WINDOW_HOURS = 48;
 
 /** TZ §7.7 — whether the counterparty's phone may be revealed for this booking. */
-function isPhoneVisible(bookingStatus: string, tripUpdatedAt: Date): boolean {
+function isPhoneVisible(bookingStatus: string, tripCompletedAt: Date | null): boolean {
   if (bookingStatus === 'accepted') return true;
   if (bookingStatus === 'completed') {
-    return Date.now() - tripUpdatedAt.getTime() < POST_COMPLETION_PHONE_WINDOW_HOURS * 60 * 60_000;
+    // Legacy completed trips without a completedAt were backfilled; if it is
+    // still null we treat the window as closed rather than always-open.
+    if (!tripCompletedAt) return false;
+    return Date.now() - tripCompletedAt.getTime() < POST_COMPLETION_PHONE_WINDOW_HOURS * 60 * 60_000;
   }
   return false;
 }
@@ -46,6 +50,7 @@ export interface BookingDTO extends PublicBooking {
     seatsAvailable: number;
     pricePerSeat: number;
   };
+  pricePerSeatSnapshot: number;
   passenger: {
     id: string;
     name: string;
@@ -114,12 +119,13 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
           driver_id: string;
           status: string;
           seats_available: number;
+          price_per_seat: number;
           origin_city: string;
           destination_city: string;
           departure_at: Date;
         }>
       >`
-        SELECT id, driver_id, status, seats_available, origin_city, destination_city, departure_at
+        SELECT id, driver_id, status, seats_available, price_per_seat, origin_city, destination_city, departure_at
         FROM trips WHERE id = ${body.tripId}::uuid FOR UPDATE
       `;
       const trip = locked[0];
@@ -127,6 +133,16 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
       if (trip.status !== 'active') throw Errors.tripNotActive();
       if (trip.driver_id === passengerId) {
         throw Errors.validation({ reason: 'cannot_book_own_trip' });
+      }
+
+      // Reject bookings against a driver who has been blocked or soft-deleted.
+      const driver = await tx.user.findUnique({
+        where: { id: trip.driver_id },
+        select: { isBlocked: true, deletedAt: true },
+      });
+      if (!driver || driver.deletedAt) throw Errors.notFound('Trip');
+      if (driver.isBlocked) {
+        throw Errors.conflict('Driver is not available', { reason: 'driver_blocked' });
       }
       if (trip.departure_at.getTime() <= now.getTime()) {
         throw Errors.tripNotActive();
@@ -143,7 +159,7 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
         where: {
           tripId: body.tripId,
           passengerId,
-          status: { in: ['pending', 'accepted'] },
+          status: { in: ['pending', 'viewed', 'accepted'] },
         },
       });
       if (existing) throw Errors.bookingAlreadyExists();
@@ -158,10 +174,10 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
         });
       }
 
-      // Business rule: no two bookings to the same driver on the same departure date.
-      const depDay = new Date(trip.departure_at);
-      depDay.setUTCHours(0, 0, 0, 0);
-      const depDayEnd = new Date(depDay.getTime() + 24 * 60 * 60_000);
+      // Business rule: no two bookings to the same driver on the same departure
+      // date — keyed off the Asia/Bishkek calendar day so it matches the day the
+      // user actually sees (rest of the system uses bishkekDayRange).
+      const { start: depDay, end: depDayEnd } = bishkekDayRange(trip.departure_at);
       const sameDriverBooking = await tx.booking.findFirst({
         where: {
           passengerId,
@@ -187,6 +203,8 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
             comment: body.comment ?? null,
             status: 'pending',
             expiresAt,
+            // Freeze the price the passenger agreed to at request time.
+            pricePerSeatSnapshot: trip.price_per_seat,
             idempotencyKey: idempotencyKey ?? null,
           },
         });
@@ -287,12 +305,12 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
         },
       });
 
-      // TZ §12.2 — if seats hit zero, all other pending bookings become expired.
+      // TZ §12.2 — if seats hit zero, all other pending/viewed bookings expire.
       if (remaining === 0) {
         await tx.booking.updateMany({
           where: {
             tripId: trip.id,
-            status: 'pending',
+            status: { in: ['pending', 'viewed'] },
             id: { not: bk.id },
           },
           data: { status: 'expired' },
@@ -406,23 +424,45 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
     input: BookingCancelInput,
   ): Promise<BookingDTO> {
     const result = await prisma.$transaction(async (tx) => {
-      const bk = await tx.booking.findUnique({
-        where: { id: bookingId },
-        include: {
-          trip: { select: { id: true, driverId: true, departureAt: true, status: true } },
-        },
-      });
+      // Lock the booking row FIRST so a concurrent cancel/accept can't decide on
+      // a stale status. All seat-return / penalty branching keys off the LOCKED
+      // status re-read here — mirrors accept()'s FOR UPDATE discipline.
+      const locked = await tx.$queryRaw<
+        Array<{
+          id: string;
+          trip_id: string;
+          passenger_id: string;
+          seats_count: number;
+          status: string;
+        }>
+      >`
+        SELECT id, trip_id, passenger_id, seats_count, status
+        FROM bookings WHERE id = ${bookingId}::uuid FOR UPDATE
+      `;
+      const bk = locked[0];
       if (!bk) throw Errors.notFound('Booking');
 
-      const isPassenger = bk.passengerId === userId;
-      const isDriver = bk.trip.driverId === userId;
+      const trip = (
+        await tx.$queryRaw<
+          Array<{ id: string; driver_id: string; departure_at: Date; status: string }>
+        >`
+          SELECT id, driver_id, departure_at, status
+          FROM trips WHERE id = ${bk.trip_id}::uuid FOR UPDATE
+        `
+      )[0];
+      if (!trip) throw Errors.notFound('Trip');
+
+      const isPassenger = bk.passenger_id === userId;
+      const isDriver = trip.driver_id === userId;
       if (!isPassenger && !isDriver) throw Errors.forbidden({ reason: 'not_participant' });
+      // Re-check status AFTER the lock — a racing cancel/accept may have already
+      // moved it out of an active state.
       if (!['pending', 'viewed', 'accepted'].includes(bk.status)) {
         throw Errors.conflict('Booking not active', { current_status: bk.status });
       }
 
       const now = new Date();
-      const timeToDeparture = bk.trip.departureAt.getTime() - now.getTime();
+      const timeToDeparture = trip.departure_at.getTime() - now.getTime();
 
       let status: string;
       let cancelledBy: 'passenger' | 'driver';
@@ -438,7 +478,7 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
       }
 
       await tx.booking.update({
-        where: { id: bookingId },
+        where: { id: bk.id },
         data: {
           status,
           cancelledBy,
@@ -447,12 +487,14 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
         },
       });
 
-      // Return seats to the trip pool iff this booking was already accepted.
-      if (bk.status === 'accepted' && bk.trip.status === 'active') {
+      // Return seats to the trip pool iff the LOCKED booking was still accepted.
+      // Branching on the locked status (not a pre-lock read) prevents a
+      // seat-leak on cancel∥accept and a double-return on cancel∥cancel.
+      if (bk.status === 'accepted' && trip.status === 'active') {
         await tx.trip.update({
-          where: { id: bk.trip.id },
+          where: { id: trip.id },
           data: {
-            seatsAvailable: { increment: bk.seatsCount },
+            seatsAvailable: { increment: bk.seats_count },
             version: { increment: 1 },
           },
         });
@@ -461,19 +503,24 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
       return {
         bookingId: bk.id,
         cancelledBy,
-        otherParty: isPassenger ? bk.trip.driverId : bk.passengerId,
-        driverId: bk.trip.driverId,
+        otherParty: isPassenger ? trip.driver_id : bk.passenger_id,
+        driverId: trip.driver_id,
         wasAccepted: bk.status === 'accepted',
       };
     });
 
-    // TZ §16.2 — driver cancelling an accepted booking loses 0.3 rating points.
+    // TZ §16.2 — driver cancelling an accepted booking loses 0.3 rating.
+    // ratingPenalty is the source of truth (recalcAverage subtracts it, so it
+    // survives future ratings). We ALSO drop the visible rating now so the
+    // sanction is immediate; a later recalc recomputes rating = avg − penalty,
+    // re-applying it from the accumulated column — never double-counted, never
+    // lost. Floored at 0. Both writes atomic.
     if (result.cancelledBy === 'driver' && result.wasAccepted) {
       await prisma.$executeRaw`
         UPDATE users
-        SET rating = GREATEST(0, rating - 0.3)
-        WHERE id = ${result.driverId}::uuid
-      `;
+        SET rating_penalty = rating_penalty + 0.3,
+            rating = GREATEST(0, rating - 0.3)
+        WHERE id = ${result.driverId}::uuid`;
     }
 
     const full = await loadDTO(prisma, result.bookingId);
@@ -501,19 +548,25 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
       throw Errors.conflict('Trip has not departed yet');
     }
 
-    // Rating penalty is applied to `users.rating` as a bounded decrement — we
-    // clamp at 0 to keep the CHECK(rating BETWEEN 0 AND 5) constraint safe.
-    await prisma.$transaction([
-      prisma.booking.update({
-        where: { id: bookingId },
+    // Atomic status-guarded transition: updateMany({status:'accepted'}) claims
+    // the booking exactly once, so a double-tap can't apply the −0.5 penalty
+    // twice. ratingPenalty is the source of truth (recalcAverage subtracts it);
+    // we also drop the visible rating now for an immediate sanction, floored at
+    // 0 — only when we won the transition.
+    await prisma.$transaction(async (tx) => {
+      const claimed = await tx.booking.updateMany({
+        where: { id: bookingId, status: 'accepted' },
         data: { status: 'no_show' },
-      }),
-      prisma.$executeRaw`
+      });
+      if (claimed.count !== 1) {
+        throw Errors.conflict('Booking not accepted');
+      }
+      await tx.$executeRaw`
         UPDATE users
-        SET rating = GREATEST(0, rating - 0.5)
-        WHERE id = ${bk.passengerId}::uuid
-      `,
-    ]);
+        SET rating_penalty = rating_penalty + 0.5,
+            rating = GREATEST(0, rating - 0.5)
+        WHERE id = ${bk.passengerId}::uuid`;
+    });
 
     return loadDTO(prisma, bookingId);
   }
@@ -527,10 +580,11 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
     if (query.status) where.status = query.status;
     const rows = await prisma.booking.findMany({
       where,
+      include: bookingDTOInclude,
       orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
       ...cursorArgs({ cursor: query.cursor, limit: query.limit }),
     });
-    const dtos = await Promise.all(rows.map((r) => loadDTO(prisma, r.id)));
+    const dtos = rows.map(mapBookingDTO);
     return sliceAndNext(dtos, query.limit);
   }
 
@@ -545,10 +599,11 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
     };
     const rows = await prisma.booking.findMany({
       where,
+      include: bookingDTOInclude,
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       ...cursorArgs({ cursor: query.cursor, limit: query.limit }),
     });
-    const dtos = await Promise.all(rows.map((r) => loadDTO(prisma, r.id)));
+    const dtos = rows.map(mapBookingDTO);
     return sliceAndNext(dtos, query.limit);
   }
 
@@ -597,33 +652,21 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────
-async function loadDTO(prisma: PrismaClient, id: string): Promise<BookingDTO> {
-  const row = await prisma.booking.findUnique({
-    where: { id },
-    include: {
-      trip: {
-        select: {
-          id: true,
-          driverId: true,
-          originCity: true,
-          destinationCity: true,
-          departureAt: true,
-          seatsAvailable: true,
-          pricePerSeat: true,
-          updatedAt: true,
-          driver: {
-            select: {
-              id: true,
-              name: true,
-              avatarUrl: true,
-              phone: true,
-              rating: true,
-              ratingCount: true,
-            },
-          },
-        },
-      },
-      passenger: {
+// Single source of truth for the relations a BookingDTO needs. Shared by the
+// per-id loader and the list queries so lists fetch everything in one findMany
+// (no per-row round-trips → no N+1).
+const bookingDTOInclude = {
+  trip: {
+    select: {
+      id: true,
+      driverId: true,
+      originCity: true,
+      destinationCity: true,
+      departureAt: true,
+      seatsAvailable: true,
+      pricePerSeat: true,
+      completedAt: true,
+      driver: {
         select: {
           id: true,
           name: true,
@@ -634,11 +677,25 @@ async function loadDTO(prisma: PrismaClient, id: string): Promise<BookingDTO> {
         },
       },
     },
-  });
-  if (!row) throw Errors.notFound('Booking');
+  },
+  passenger: {
+    select: {
+      id: true,
+      name: true,
+      avatarUrl: true,
+      phone: true,
+      rating: true,
+      ratingCount: true,
+    },
+  },
+} satisfies Prisma.BookingInclude;
 
+type BookingRowWithRelations = Prisma.BookingGetPayload<{ include: typeof bookingDTOInclude }>;
+
+/** Pure row → DTO mapping. No DB access — safe to map a whole list in memory. */
+function mapBookingDTO(row: BookingRowWithRelations): BookingDTO {
   // TZ §7.7 — gate phone exposure by booking status. Hidden until accepted.
-  const showPhone = isPhoneVisible(row.status, row.trip.updatedAt);
+  const showPhone = isPhoneVisible(row.status, row.trip.completedAt);
 
   return {
     id: row.id,
@@ -649,6 +706,8 @@ async function loadDTO(prisma: PrismaClient, id: string): Promise<BookingDTO> {
     createdAt: row.createdAt,
     expiresAt: row.expiresAt,
     comment: row.comment,
+    // Legacy rows predate the snapshot column — fall back to the live trip price.
+    pricePerSeatSnapshot: row.pricePerSeatSnapshot ?? row.trip.pricePerSeat,
     trip: {
       id: row.trip.id,
       driverId: row.trip.driverId,
@@ -675,6 +734,15 @@ async function loadDTO(prisma: PrismaClient, id: string): Promise<BookingDTO> {
       ratingCount: row.passenger.ratingCount,
     },
   };
+}
+
+async function loadDTO(prisma: PrismaClient, id: string): Promise<BookingDTO> {
+  const row = await prisma.booking.findUnique({
+    where: { id },
+    include: bookingDTOInclude,
+  });
+  if (!row) throw Errors.notFound('Booking');
+  return mapBookingDTO(row);
 }
 
 // silence unused

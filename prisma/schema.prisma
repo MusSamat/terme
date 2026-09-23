@@ -31,6 +31,10 @@ model User {
   roles            String[]  @default(["passenger"])
   rating           Decimal   @default(0.00) @db.Decimal(3, 2)
   ratingCount      Int       @default(0) @map("rating_count")
+  // Accumulated behavioural penalties (driver-cancel, no-show). Subtracted from
+  // the average-of-recent-scores in recalcAverage so sanctions survive new
+  // ratings (they used to be overwritten). Always ≥ 0; grows, never auto-decays.
+  ratingPenalty    Decimal   @default(0.00) @map("rating_penalty") @db.Decimal(4, 2)
   language         String    @default("ru") @db.VarChar(2)
   isBlocked        Boolean   @default(false) @map("is_blocked")
   blockedReason    String?   @map("blocked_reason")
@@ -138,6 +142,10 @@ model Trip {
   preferences          Json      @default("{}")
   comment              String?   @db.VarChar(300)
   status               String    @default("active") @db.VarChar(20)
+  // Set exactly once when the trip transitions to a terminal completed state.
+  // Drives the 48h post-trip phone-visibility window — decoupled from updatedAt,
+  // which any view/like increment would otherwise keep bumping forever.
+  completedAt          DateTime? @map("completed_at") @db.Timestamptz(6)
   cancelledReason      String?   @map("cancelled_reason")
   idempotencyKey       String?   @unique @map("idempotency_key") @db.VarChar(100)
   viewsCount           Int       @default(0) @map("views_count")
@@ -171,6 +179,9 @@ model Booking {
   passengerId String    @map("passenger_id") @db.Uuid
   seatsCount  Int       @map("seats_count") @db.SmallInt
   comment     String?   @db.VarChar(300)
+  // Price per seat frozen at booking time so a driver raising trip.pricePerSeat
+  // after acceptance can't silently change what the passenger agreed to pay.
+  pricePerSeatSnapshot Int? @map("price_per_seat_snapshot")
   status      String    @default("pending") @db.VarChar(25)
   cancelledBy      String?   @map("cancelled_by") @db.VarChar(10)
   cancelledAt      DateTime? @map("cancelled_at") @db.Timestamptz(6)
@@ -236,6 +247,8 @@ model Rating {
 
   @@unique([tripId, raterId, rateeId])
   @@index([rateeId])
+  // Spam guard counts prior ratings by the same rater+comment — raterId must lead.
+  @@index([raterId])
   @@map("ratings")
 }
 
@@ -483,6 +496,9 @@ model ContactReveal {
   @@index([viewerId, contextType, contextId])
   @@index([viewerId, createdAt])
   @@index([targetUserId])
+  // Reveal-count per listing (trip/request details, myTrips groupBy) queries by
+  // (contextType, contextId) — viewerId-led indexes don't cover it.
+  @@index([contextType, contextId])
   @@map("contact_reveals")
 }
 
@@ -518,6 +534,10 @@ model LoyaltyTransaction {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // Idempotent per-trip awards: (user, trip, source) can exist at most once, so a
+  // race between manual complete() and the auto_complete cron can't double-award.
+  // NULL tripId (bonus/manual) is exempt — Postgres treats NULLs as distinct.
+  @@unique([userId, tripId, source])
   @@index([userId])
   @@index([createdAt])
   @@map("loyalty_transactions")

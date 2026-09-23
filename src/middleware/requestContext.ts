@@ -11,8 +11,12 @@ import { logger } from '@/lib/logger.js';
 export const requestContext: RequestHandler = (req, res, next) => {
   // Accept an incoming request id if the reverse proxy/client provided one —
   // this preserves trace continuity. Otherwise mint a fresh UUID v4.
+  // Constrain the charset (hex + dash) AND cap the length (8..200) so a
+  // malicious client can't inject newlines/control chars or an unbounded blob
+  // into structured logs (log injection / memory pressure).
   const inbound = req.header('x-request-id');
-  const requestId = inbound && /^[a-f0-9-]{8,}$/i.test(inbound) ? inbound : generateUuid();
+  const requestId =
+    inbound && /^[a-f0-9-]{8,200}$/i.test(inbound) ? inbound : generateUuid();
 
   req.requestId = requestId;
   req.locale = parseAcceptLanguage(req.header('accept-language'));

@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { Bot, type Context, InlineKeyboard, Keyboard } from 'grammy';
+import { Bot, type Context, GrammyError, InlineKeyboard, Keyboard } from 'grammy';
 import { env } from '@/config/env.js';
 import { logger } from '@/lib/logger.js';
 import {
@@ -179,12 +179,35 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
     const lang: 'ru' | 'kg' = user.language === 'kg' ? 'kg' : 'ru';
     const text = render(tpl, lang, typeof vars === 'function' ? vars(lang) : vars);
     const kb = keyboard?.(lang);
+    const opts = {
+      parse_mode: 'HTML' as const,
+      ...(kb ? { reply_markup: kb } : {}),
+    };
+    const chatId = Number(user.telegramId);
     try {
-      await bot.api.sendMessage(Number(user.telegramId), text, {
-        parse_mode: 'HTML',
-        ...(kb ? { reply_markup: kb } : {}),
-      });
+      await bot.api.sendMessage(chatId, text, opts);
     } catch (err) {
+      // 429 Too Many Requests → Telegram tells us how long to wait in
+      // parameters.retry_after. Respect it once (bounded single retry) instead
+      // of dropping the notification.
+      if (err instanceof GrammyError && err.error_code === 429) {
+        const retryAfter = Math.min(err.parameters.retry_after ?? 1, 60);
+        logger.warn({ userId, retryAfter }, 'telegram 429 — retrying after backoff');
+        await new Promise((r) => setTimeout(r, retryAfter * 1000));
+        await bot.api
+          .sendMessage(chatId, text, opts)
+          .catch((e: unknown) => logger.warn({ err: e, userId }, 'telegram send failed after 429 retry'));
+        return;
+      }
+      // 403 Forbidden → the user blocked the bot (or deleted their account).
+      // Clear their delivery flag so we stop trying every notification.
+      if (err instanceof GrammyError && err.error_code === 403) {
+        logger.info({ userId }, 'telegram 403 — bot blocked by user, disabling delivery');
+        await prisma.user
+          .update({ where: { id: userId }, data: { notificationsEnabled: false } })
+          .catch((e: unknown) => logger.warn({ err: e, userId }, 'failed to clear telegram delivery flag'));
+        return;
+      }
       logger.warn({ err, userId }, 'telegram send failed');
     }
   }
@@ -702,8 +725,30 @@ export async function startTelegramBot(
 
   bot.catch((err) => logger.warn({ err }, 'grammy bot handler error'));
 
-  // Long-poll in background — don't await (start() resolves on stop).
-  void bot.start({ drop_pending_updates: true });
+  // Long-poll in background — don't await (start() resolves only on stop()).
+  // A rejected start (409 Conflict from a second poller, invalid token, network
+  // loss) must NOT die silently: log it and attempt a bounded, backing-off
+  // restart. 409 usually means a duplicate instance — retrying a few times
+  // covers a transient overlap during redeploy without hammering the API.
+  const MAX_RESTARTS = 5;
+  const startWithRetry = (attempt = 0): void => {
+    bot.start({ drop_pending_updates: true }).catch((err: unknown) => {
+      const conflict = err instanceof GrammyError && err.error_code === 409;
+      const level = attempt >= MAX_RESTARTS ? 'fatal' : 'error';
+      logger[level](
+        { err, attempt, conflict },
+        conflict
+          ? 'telegram bot start conflict (another poller running)'
+          : 'telegram bot start failed',
+      );
+      if (attempt >= MAX_RESTARTS) return;
+      // Exponential backoff, capped at 30s.
+      const delayMs = Math.min(2 ** attempt * 1000, 30_000);
+      const timer = setTimeout(() => startWithRetry(attempt + 1), delayMs);
+      timer.unref();
+    });
+  };
+  startWithRetry();
 
   logger.info('Telegram bot started (long polling)');
   return bot;

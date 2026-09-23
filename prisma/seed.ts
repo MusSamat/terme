@@ -24,7 +24,19 @@ async function seedSuperadmin(prisma: PrismaClient): Promise<void> {
 
   const existing = await prisma.admin.findUnique({ where: { email } });
   if (existing) {
-    console.warn(`[seed] superadmin ${email} already exists — skipping`);
+    // The temp password is a KNOWN literal — never leave the flag unset. If a
+    // prior run (or a manual edit) cleared mustChangePassword while the account
+    // still holds the seed password, re-force it so requireAdmin (M3) blocks all
+    // admin routes until the password is rotated on first login.
+    if (!existing.mustChangePassword) {
+      await prisma.admin.update({
+        where: { id: existing.id },
+        data: { mustChangePassword: true },
+      });
+      console.warn(`[seed] superadmin ${email} exists — re-forced mustChangePassword`);
+    } else {
+      console.warn(`[seed] superadmin ${email} already exists — skipping`);
+    }
     return;
   }
 

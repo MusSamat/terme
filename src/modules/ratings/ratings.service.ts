@@ -115,16 +115,27 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
     });
     if (dup) throw Errors.conflict('Already rated', { reason: 'already_rated' });
 
-    const created = await prisma.rating.create({
-      data: {
-        tripId: body.tripId,
-        raterId,
-        rateeId: body.rateeId,
-        score: body.score,
-        tags: body.tags,
-        comment: body.comment ?? null,
-      },
-    });
+    let created;
+    try {
+      created = await prisma.rating.create({
+        data: {
+          tripId: body.tripId,
+          raterId,
+          rateeId: body.rateeId,
+          score: body.score,
+          tags: body.tags,
+          comment: body.comment ?? null,
+        },
+      });
+    } catch (e) {
+      // Concurrent insert can win the race between our findUnique dup-check and
+      // create() — the UNIQUE (trip, rater, ratee) constraint throws P2002.
+      // Translate to the same clean 409 the explicit check returns.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw Errors.conflict('Already rated', { reason: 'already_rated' });
+      }
+      throw e;
+    }
 
     // Post-insert aggregation + warnings (TZ §14.3 pseudocode).
     const { average } = await recalcAverage(prisma, body.rateeId);
@@ -155,6 +166,31 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
 
     const since = new Date(Date.now() - RATING_WINDOW_DAYS * 24 * 60 * 60_000);
 
+    // Cursor = booking id of the last item on the previous page. The merged list
+    // is ordered by departure_at DESC, so translate the cursor into its anchor
+    // (departure_at, booking id) and push a keyset predicate into both queries.
+    // Rows strictly "after" the anchor: earlier departure, or same departure with
+    // a larger id (stable tiebreaker matching the in-memory sort's id fallback).
+    let cursorAnchor: { departureAt: Date; bookingId: string } | null = null;
+    if (query.cursor) {
+      const anchorRows = await prisma.$queryRaw<Array<{ departure_at: Date }>>`
+        SELECT t.departure_at
+        FROM bookings b
+        JOIN trips t ON t.id = b.trip_id
+        WHERE b.id = ${query.cursor}::uuid
+        LIMIT 1
+      `;
+      const anchor = anchorRows[0];
+      if (anchor) {
+        cursorAnchor = { departureAt: anchor.departure_at, bookingId: query.cursor };
+      }
+    }
+    const cursorDeparture = cursorAnchor?.departureAt ?? null;
+    const cursorBookingId = cursorAnchor?.bookingId ?? null;
+
+    // take+1 to detect "has more"; LIMIT each source so neither scans unbounded.
+    const sqlLimit = query.limit + 1;
+
     // Passenger-side: bookings where user = passenger, status = completed,
     // no rating from user to driver yet, within window.
     const asPassengerRows = await prisma.$queryRaw<
@@ -177,11 +213,17 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
       WHERE b.passenger_id = ${userId}::uuid
         AND b.status = 'completed'
         AND t.departure_at >= ${since}
+        AND (
+          ${cursorDeparture}::timestamptz IS NULL
+          OR t.departure_at < ${cursorDeparture}::timestamptz
+          OR (t.departure_at = ${cursorDeparture}::timestamptz AND b.id > ${cursorBookingId}::uuid)
+        )
         AND NOT EXISTS (
           SELECT 1 FROM ratings r
           WHERE r.trip_id = t.id AND r.rater_id = ${userId}::uuid AND r.ratee_id = t.driver_id
         )
-      ORDER BY t.departure_at DESC
+      ORDER BY t.departure_at DESC, b.id ASC
+      LIMIT ${sqlLimit}
     `;
 
     // Driver-side: completed bookings on user's trips where user hasn't rated
@@ -206,11 +248,17 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
       WHERE t.driver_id = ${userId}::uuid
         AND b.status = 'completed'
         AND t.departure_at >= ${since}
+        AND (
+          ${cursorDeparture}::timestamptz IS NULL
+          OR t.departure_at < ${cursorDeparture}::timestamptz
+          OR (t.departure_at = ${cursorDeparture}::timestamptz AND b.id > ${cursorBookingId}::uuid)
+        )
         AND NOT EXISTS (
           SELECT 1 FROM ratings r
           WHERE r.trip_id = t.id AND r.rater_id = ${userId}::uuid AND r.ratee_id = b.passenger_id
         )
-      ORDER BY t.departure_at DESC
+      ORDER BY t.departure_at DESC, b.id ASC
+      LIMIT ${sqlLimit}
     `;
 
     const items = [
@@ -232,11 +280,16 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
         departureAt: r.departure_at,
         expiresAt: new Date(r.departure_at.getTime() + RATING_WINDOW_DAYS * 24 * 60 * 60_000),
       })),
-    ].sort((a, b) => b.departureAt.getTime() - a.departureAt.getTime());
+    ].sort((a, b) => {
+      const byDeparture = b.departureAt.getTime() - a.departureAt.getTime();
+      // Tiebreaker must match SQL "b.id ASC" so the merged order is stable and
+      // the cursor keyset lines up across pages.
+      return byDeparture !== 0 ? byDeparture : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
 
-    // In-memory cursor slicing since we aggregate two queries — fine for small
-    // pending lists which are by nature bounded (7-day window).
-    void query;
+    // Each source already applied the keyset cursor + LIMIT (limit+1). The merged
+    // list can hold up to 2*(limit+1) rows; slice to the page and derive the next
+    // cursor (booking id of the last emitted row).
     return sliceAndNext(items, query.limit);
   }
 
@@ -313,14 +366,30 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
     prisma: PrismaClient,
     userId: string,
   ): Promise<{ average: number | null; count: number }> {
-    const rows = await prisma.rating.findMany({
-      where: { rateeId: userId },
-      orderBy: { createdAt: 'desc' },
-      take: RATING_SAMPLE,
-      select: { score: true },
-    });
+    // Read behavioural penalty in the same path so it's applied to the recomputed
+    // average. The bookings service accumulates it (users.ratingPenalty) instead
+    // of writing users.rating directly, so recalcAverage must subtract it rather
+    // than overwrite and erase it.
+    const [rows, ratee] = await Promise.all([
+      prisma.rating.findMany({
+        where: { rateeId: userId },
+        orderBy: { createdAt: 'desc' },
+        take: RATING_SAMPLE,
+        select: { score: true },
+      }),
+      prisma.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { ratingPenalty: true },
+      }),
+    ]);
+    const penalty = ratee.ratingPenalty.toNumber();
+
     if (rows.length < RATING_VISIBLE_AFTER) {
-      // Still keep ratingCount up to date — it's used for "Новый" labeling.
+      // Average stays hidden (null) until RATING_VISIBLE_AFTER ratings exist, so
+      // the displayed rating column is irrelevant here — leave it untouched
+      // (current semantics) and only keep ratingCount fresh for "Новый" labeling.
+      // The penalty is preserved in users.ratingPenalty and folds in once the
+      // average becomes visible.
       await prisma.user.update({
         where: { id: userId },
         data: { ratingCount: rows.length },
@@ -328,7 +397,10 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
       return { average: null, count: rows.length };
     }
     const avg = rows.reduce((s, r) => s + r.score, 0) / rows.length;
-    const rounded = Math.round(avg * 100) / 100;
+    // newRating = average(recent scores) − ratingPenalty, clamped to [1.0, 5.0].
+    const penalized = avg - penalty;
+    const clamped = Math.min(5, Math.max(1, penalized));
+    const rounded = Math.round(clamped * 100) / 100;
     await prisma.user.update({
       where: { id: userId },
       data: {

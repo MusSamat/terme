@@ -81,12 +81,25 @@ async function main(): Promise<void> {
 
     try {
       if (bot) await bot.stop();
+      // Wait for any in-flight cron job to finish before we disconnect Prisma,
+      // otherwise a running job hits a dead client. scheduler.stop() is bounded.
       await scheduler.stop();
+      // Close Socket.IO first: `server.close()` only stops accepting new
+      // connections — live WebSockets keep the server (and event loop) open
+      // until the 15s force-exit. io.close() disconnects every socket and stops
+      // the engine, letting server.close() actually resolve.
+      await new Promise<void>((resolve) => io.close(() => resolve()));
       // `server.close()` throws ERR_SERVER_NOT_RUNNING if bootstrap failed
       // before .listen() resolved (e.g. EADDRINUSE). Only close when listening.
+      // io.close() already closes the underlying server it was attached to, so
+      // guard against a double-close (which would reject with that same error).
       if (server.listening) {
         await new Promise<void>((resolve, reject) =>
-          server.close((err) => (err ? reject(err) : resolve())),
+          server.close((err) =>
+            err && (err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING'
+              ? reject(err)
+              : resolve(),
+          ),
         );
       }
       await disconnectPrisma();

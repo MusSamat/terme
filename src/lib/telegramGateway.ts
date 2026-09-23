@@ -2,6 +2,13 @@ import { env } from '@/config/env.js';
 import { logger } from '@/lib/logger.js';
 import { recordSent } from '@/lib/sms.js';
 
+// ⚠️ DEAD CODE (kept for reference only). OTP is now delivered EXCLUSIVELY via
+// WhatsApp (see lib/whatsapp.ts + deliverOtp in auth.otp.ts). This Telegram
+// Gateway delivery path has NO live callers and MUST NOT be re-wired as an OTP
+// channel: delivering a code over Telegram to an unproven phone was part of the
+// C1 account-takeover vector. If Telegram Gateway is ever revived, gate it and
+// re-review ownership proofs first.
+//
 // Telegram Gateway — delivers a verification code to any phone number that has
 // Telegram, without the user starting our bot. https://core.telegram.org/gateway/api
 const GATEWAY_URL = 'https://gatewayapi.telegram.org';

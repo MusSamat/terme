@@ -11,6 +11,12 @@ import type { GoogleLoginInput, AppleLoginInput, PhoneLoginInput, AddProviderInp
 import type { AnyAuthResult, AuthResult } from './auth.types.js';
 import { issueFullAuthForUser } from './auth.helpers.js';
 
+// L1: cost-12 dummy bcrypt hash (random plaintext, matches nothing) so verifying
+// against a non-existent / passwordless account costs the same as a real login —
+// no timing oracle for phone enumeration. Must stay cost 12 to match real hashes.
+const DUMMY_BCRYPT_HASH_COST12 =
+  '$2a$12$C6UzMDM.H6dfI/f/IKcEeODuLXk1UT9UyN3Ci7q2ZfP8i8VqQ0y8W';
+
 export function createProvidersMethods(prisma: PrismaClient) {
   async function continueOAuthLogin(
     provider: Extract<Provider, 'google' | 'apple'>,
@@ -173,8 +179,7 @@ export function createProvidersMethods(prisma: PrismaClient) {
     const user = await prisma.user.findFirst({
       where: { phone: body.phone, deletedAt: null },
     });
-    const hashToCheck =
-      user?.passwordHash ?? '$2a$04$00000000000000000000000000000000000000000000000000000';
+    const hashToCheck = user?.passwordHash ?? DUMMY_BCRYPT_HASH_COST12;
     const ok = await password.verify(body.password, hashToCheck);
     if (!user || !user.passwordHash || !ok) {
       throw Errors.unauthorized({ reason: 'invalid_credentials' });

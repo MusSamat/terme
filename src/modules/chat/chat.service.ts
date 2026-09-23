@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { Errors } from '@/lib/errors.js';
+import { logger } from '@/lib/logger.js';
 import { toFileUrl } from '@/lib/uploads.js';
 import { cursorArgs, sliceAndNext } from '@/lib/pagination.js';
 import { filterPhoneNumbers } from '@/lib/phoneFilter.js';
@@ -184,7 +185,11 @@ export function createChatService(prisma: PrismaClient, notifier: Notifier): Cha
     const msg = toMessage(created);
 
     const recipientId = senderId === bk.passengerId ? bk.trip.driverId : bk.passengerId;
-    await notifier.newMessage(recipientId, { message: msg });
+    // Fire-and-forget: the composite notifier includes a Telegram send; awaiting
+    // it would delay the socket ACK / room broadcast if Telegram is slow.
+    void notifier.newMessage(recipientId, { message: msg }).catch((err) => {
+      logger.warn({ err, bookingId }, 'chat: newMessage notify failed');
+    });
 
     // Emit limit warning when pre-booking count hits the threshold.
     if (isPreBooking) {

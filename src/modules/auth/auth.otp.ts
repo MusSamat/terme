@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import { Errors, AppError } from '@/lib/errors.js';
+import { Errors } from '@/lib/errors.js';
 import * as password from '@/lib/bcrypt.js';
 import { generateOtp, generateUuid } from '@/lib/random.js';
 import { recordSent } from '@/lib/sms.js';
@@ -74,9 +74,21 @@ async function deliverOtp(phone: string, code: string, text: string): Promise<vo
   logger.info({ phone }, '[MOCK OTP] captured locally (WhatsApp not configured)');
 }
 
-// Called by the grammy /start handler when the user opens the deep-link.
-// Validates the token, creates an OTP record, delivers the code via bot,
-// and marks the token as sent — all atomically in a transaction.
+// Called by the grammy /start handler when the user opens the `reg_` deep-link.
+//
+// SECURITY (C1): this used to create an OTP for record.phone and deliver it to
+// the REQUESTER's OWN Telegram chat. An attacker could request a link for any
+// victim's phone, press Start, receive the victim's code in their own chat, and
+// complete /auth/phone/verify → full account takeover. The Telegram chat proves
+// nothing about ownership of record.phone.
+//
+// Fix: never deliver an OTP to a Telegram chat for an unproven phone. All OTP
+// now goes via WhatsApp (see deliverOtp). The `reg_` deep-link OTP flow is
+// retired — this handler only tells the user to continue in the browser (where
+// /auth/phone/send-otp delivers the code to the real phone via WhatsApp) or, for
+// a phone-less Telegram registration, to use the request_contact flow
+// (handleBotLoginToken → registerFromTelegramContact) which verifies the shared
+// contact's phone_number belongs to the Telegram account.
 export async function handleTelegramLinkToken(
   prisma: PrismaClient,
   bot: TelegramSender,
@@ -88,31 +100,9 @@ export async function handleTelegramLinkToken(
     await bot.api.sendMessage(telegramId, 'Ссылка устарела. Начните регистрацию заново.');
     return;
   }
-  if (record.status !== 'waiting') {
-    await bot.api.sendMessage(telegramId, 'Код уже отправлен. Введите его в браузере.');
-    return;
-  }
-
-  let code: string;
-  try {
-    code = await createOtpRecord(prisma, record.phone);
-  } catch (err) {
-    const isRateLimit = err instanceof AppError && err.code === 'RATE_LIMITED';
-    const msg = isRateLimit
-      ? 'Слишком много запросов. Подождите минуту и попробуйте снова.'
-      : 'Не удалось создать код. Попробуйте позже.';
-    await bot.api.sendMessage(telegramId, msg);
-    return;
-  }
-
-  await prisma.telegramLinkToken.update({
-    where: { token },
-    data: { telegramId: BigInt(telegramId), status: 'sent' },
-  });
-
   await bot.api.sendMessage(
     telegramId,
-    `Terme: ${code} — код подтверждения. Срок действия: 10 минут.`,
+    'Код подтверждения отправляется на ваш номер в WhatsApp. Вернитесь в браузер и введите его там.',
   );
 }
 
@@ -260,10 +250,11 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
       logger.error({ err, phone }, 'OTP delivery failed');
       throw Errors.serviceUnavailable('OTP delivery failed');
     }
-    const isDev = process.env.NODE_ENV !== 'production';
+    // L3: only leak the code back to the client when OTP_DEBUG is explicitly on
+    // (dev/CI convenience), never merely because NODE_ENV !== 'production'.
     return {
       expiresInSec: OTP_TTL_SEC,
-      ...(isDev && { debug_code: code }),
+      ...(env.OTP_DEBUG && { debug_code: code }),
     };
   }
 
@@ -389,9 +380,14 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
             logger.info({ provisionalId: existing.id, targetId: phoneOwner.id }, 'provisional account merged into phone account');
             return tx.user.findUniqueOrThrow({ where: { id: phoneOwner.id } });
           }
+          // L2: do NOT leak the owning account id to the client — it enables
+          // account enumeration. Log it server-side instead for support triage.
+          logger.info(
+            { phone, existingUserId: phoneOwner.id },
+            'phone bind rejected — already linked to another account',
+          );
           throw Errors.conflict('Phone already linked to another account', {
             reason: 'phone_taken',
-            existing_user_id: phoneOwner.id,
           });
         }
         return tx.user.update({ where: { id: existing.id }, data: { phone, phoneVerifiedAt: now } });
@@ -500,27 +496,14 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
       if (provisionalUserId) {
         return bindPhoneInTx(tx, provisionalUserId, phone, now);
       }
-      // If this OTP was delivered via the Telegram link flow, we already know the
-      // user's Telegram chat. Bind it to the account so a later "login via Telegram"
-      // resolves to THIS account instead of silently creating a duplicate.
-      const linkTok = await tx.telegramLinkToken.findFirst({
-        where: { phone, telegramId: { not: null } },
-        orderBy: { createdAt: 'desc' },
-      });
-      let capturedTgId = linkTok?.telegramId ?? null;
-      if (capturedTgId !== null) {
-        // Never collide on the telegram_id user index or the telegram authProvider.
-        const [tgUserOwner, tgProviderOwner] = await Promise.all([
-          tx.user.findFirst({ where: { telegramId: capturedTgId, deletedAt: null } }),
-          tx.authProvider.findUnique({
-            where: {
-              provider_providerUserId: { provider: 'telegram', providerUserId: String(capturedTgId) },
-            },
-          }),
-        ]);
-        if (tgUserOwner || tgProviderOwner) capturedTgId = null;
-      }
-
+      // SECURITY (C1): we no longer auto-bind a telegramId harvested from a
+      // telegramLinkToken here. That binding trusted an UNVERIFIED link record
+      // (no expiry/status check, no proof the Telegram account owns this phone)
+      // and, combined with the retired `reg_` deep-link OTP delivery, allowed an
+      // attacker to attach their Telegram to a victim's freshly-verified phone
+      // account. Telegram is now linked ONLY through proven-ownership paths:
+      // /auth/telegram (signed initData) and the request_contact registration
+      // flow (registerFromTelegramContact), which verify the Telegram identity.
       let u = await tx.user.findFirst({ where: { phone, deletedAt: null } });
       if (!u) {
         u = await tx.user.create({
@@ -531,34 +514,19 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
             roles: ['passenger'],
             phoneVerifiedAt: now,
             termsAcceptedAt: now,
-            ...(capturedTgId !== null ? { telegramId: capturedTgId } : {}),
           },
         });
-      } else {
-        const needsPhone = !u.phoneVerifiedAt;
-        const needsTg = capturedTgId !== null && u.telegramId === null;
-        if (needsPhone || needsTg) {
-          u = await tx.user.update({
-            where: { id: u.id },
-            data: {
-              ...(needsPhone ? { phoneVerifiedAt: now } : {}),
-              ...(needsTg ? { telegramId: capturedTgId } : {}),
-            },
-          });
-        }
+      } else if (!u.phoneVerifiedAt) {
+        u = await tx.user.update({
+          where: { id: u.id },
+          data: { phoneVerifiedAt: now },
+        });
       }
       await tx.authProvider.upsert({
         where: { provider_providerUserId: { provider: 'phone', providerUserId: phone } },
         update: {},
         create: { userId: u.id, provider: 'phone', providerUserId: phone },
       });
-      // When we bound a Telegram chat above, create the matching provider link so
-      // /auth/telegram resolves to THIS account (it looks up by authProvider).
-      if (capturedTgId !== null && u.telegramId === capturedTgId) {
-        await tx.authProvider.create({
-          data: { userId: u.id, provider: 'telegram', providerUserId: String(capturedTgId) },
-        });
-      }
       return u;
     });
 
@@ -599,5 +567,5 @@ export function createOtpMethods(prisma: PrismaClient, _bot: TelegramSender | nu
     return issueFullAuthForUser(prisma, record.userId, 'telegram', deviceInfo);
   }
 
-  return { sendOtp, sendTelegramOtp, sendPhoneAddOtp, bindVerifiedPhone, initTelegramLink, getTelegramLinkStatus, verifyOtp, registerWithPhone, initBotLogin, getBotLoginStatus, claimBotLogin };
+  return { sendOtp, sendTelegramOtp, sendPhoneAddOtp, bindVerifiedPhone, consumeOtp, initTelegramLink, getTelegramLinkStatus, verifyOtp, registerWithPhone, initBotLogin, getBotLoginStatus, claimBotLogin };
 }

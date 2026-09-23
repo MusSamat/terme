@@ -81,10 +81,17 @@ export const requireAdmin: RequestHandler = async (req, _res, next) => {
     const decoded = verifyAdminAccessToken(token);
     const admin = await getPrisma().admin.findUnique({
       where: { id: decoded.sub },
-      select: { id: true, email: true, role: true, isActive: true },
+      select: { id: true, email: true, role: true, isActive: true, mustChangePassword: true },
     });
     if (!admin || !admin.isActive) {
       return next(Errors.unauthorized({ reason: 'admin_not_found_or_inactive' }));
+    }
+
+    // M3: while a forced password change is pending, the admin may ONLY reach the
+    // change-password endpoint. Every other admin route is 403'd until the flag
+    // clears (adminChangePassword sets mustChangePassword=false).
+    if (admin.mustChangePassword && !req.path.endsWith('/admin/change-password')) {
+      return next(Errors.forbidden({ reason: 'must_change_password' }));
     }
 
     req.admin = { id: admin.id, email: admin.email, role: admin.role as 'admin' | 'superadmin' };

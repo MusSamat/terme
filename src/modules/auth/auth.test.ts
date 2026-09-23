@@ -220,7 +220,7 @@ describe('POST /v1/auth/refresh (rotation)', () => {
     return { access: res.body.accessToken, refresh: res.body.refreshToken };
   }
 
-  it('rotates: returns new pair and revokes the old refresh', async () => {
+  it('rotates: new pair; grace-retry returns the same pair; later reuse is rejected', async () => {
     const tokens = await registerViaOtp('+996700777000');
     const refreshRes = await request(app)
       .post('/v1/auth/refresh')
@@ -230,7 +230,19 @@ describe('POST /v1/auth/refresh (rotation)', () => {
     expect(refreshRes.body.accessToken).toBeTypeOf('string');
     expect(refreshRes.body.refreshToken).not.toBe(tokens.refresh);
 
-    // Re-using the old refresh must fail.
+    // Within the 60s grace window a replay is a legit client retry → same pair,
+    // no logout (this is what prevents false logouts on app restart/retry).
+    const grace = await request(app)
+      .post('/v1/auth/refresh')
+      .send({ refreshToken: tokens.refresh, channel: 'mobile' });
+    expect(grace.status).toBe(200);
+    expect(grace.body.refreshToken).toBe(refreshRes.body.refreshToken);
+
+    // Age the rotated token past the grace window → a replay is real reuse → 401.
+    await testPrisma.refreshToken.updateMany({
+      where: { usedAt: { not: null } },
+      data: { usedAt: new Date(Date.now() - 2 * 60_000) },
+    });
     const replay = await request(app)
       .post('/v1/auth/refresh')
       .send({ refreshToken: tokens.refresh, channel: 'mobile' });
