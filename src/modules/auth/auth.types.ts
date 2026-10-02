@@ -18,6 +18,7 @@ export interface AuthResult extends TokenPair {
     phoneVerified: boolean;
     telegramLinked: boolean;
     providers: Provider[];
+    termsAcceptedAt: Date | null;
   };
   kind: 'full';
 }

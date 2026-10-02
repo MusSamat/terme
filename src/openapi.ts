@@ -130,6 +130,7 @@ export const openapiDocument = {
                     type: 'array',
                     items: { type: 'string', enum: ['telegram', 'google', 'apple', 'phone'] },
                   },
+                  termsAcceptedAt: { type: 'string', format: 'date-time', nullable: true },
                 },
               },
             },

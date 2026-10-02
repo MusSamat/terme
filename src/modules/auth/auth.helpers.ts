@@ -84,6 +84,7 @@ export async function issueFullAuthForUser(
       phoneVerified: user.phoneVerifiedAt !== null,
       telegramLinked: user.telegramId !== null,
       providers,
+      termsAcceptedAt: user.termsAcceptedAt,
     },
     kind: 'full',
   };
