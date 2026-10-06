@@ -58,7 +58,9 @@ function cachedPairWithinGrace(rotatedTokenId: string): TokenPair | null {
   return hit.pair;
 }
 
-export function createSessionMethods(prisma: PrismaClient, notifier: Notifier) {
+// `_notifier` is kept in the signature (not currently used) — the reuse alert
+// that consumed it is temporarily disabled; re-enable in refresh() below.
+export function createSessionMethods(prisma: PrismaClient, _notifier: Notifier) {
   // Token Reuse Detection per TZ §7.5
   async function refresh(
     token: string,
@@ -87,26 +89,29 @@ export function createSessionMethods(prisma: PrismaClient, notifier: Notifier) {
         // Cache miss inside grace (e.g. after a restart) → fall through and mint
         // a single fresh pair for this rotation, then cache it.
       } else {
-        // Real reuse: a token rotated long ago is being replayed → someone holds
-        // a stolen/stale token. Revoke ALL of the user's refresh tokens and
-        // reject. (TOKEN_REUSE_DETECTED — do not spam the user, just secure.)
-        await prisma.refreshToken.updateMany({
-          where: { userId: stored.userId, revokedAt: null },
-          data: { revokedAt: new Date() },
-        });
-        replayCache.delete(stored.id);
+        // TEMP (MVP): the reuse detector was false-positiving on legitimate
+        // single-device use (a stale token replayed after the 60s grace window —
+        // e.g. the app resumes from background with an in-memory token it already
+        // rotated), nuking EVERY session and pushing an alarming "all devices
+        // logged out" notification. Disabled for now: we just reject THIS stale
+        // refresh so the one device re-logs in, WITHOUT revoking other sessions
+        // and WITHOUT the security alert. Re-enable the revoke-all +
+        // securityAlertReuse below once rotation races are fully ironed out.
+        //
+        //   await prisma.refreshToken.updateMany({
+        //     where: { userId: stored.userId, revokedAt: null },
+        //     data: { revokedAt: new Date() },
+        //   });
+        //   replayCache.delete(stored.id);
+        //   void notifier
+        //     .securityAlertReuse(stored.userId, { reusedAt: new Date(), ip })
+        //     .catch((err) => logger.error({ err, userId: stored.userId }, 'reuse alert failed'));
+        //   throw Errors.unauthorized({ reason: 'token_reuse_detected', code: 'TOKEN_REUSE_DETECTED' });
         logger.warn(
           { userId: stored.userId, tokenId: stored.id, ip },
-          'refresh token reuse detected — all sessions revoked',
+          'stale refresh replay outside grace — rejecting this token only (reuse revoke-all disabled)',
         );
-        // Real reuse outside the grace window — the grace window already absorbs
-        // legit client retries, so this is a genuine security event worth a
-        // one-off alert (not spam). Fire-and-forget so a notifier hiccup can't
-        // turn the 401 into a 500.
-        void notifier
-          .securityAlertReuse(stored.userId, { reusedAt: new Date(), ip })
-          .catch((err) => logger.error({ err, userId: stored.userId }, 'reuse alert failed'));
-        throw Errors.unauthorized({ reason: 'token_reuse_detected', code: 'TOKEN_REUSE_DETECTED' });
+        throw Errors.unauthorized({ reason: 'refresh_rotated' });
       }
     }
 

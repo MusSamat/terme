@@ -110,21 +110,24 @@ describe('AUTH-06 — Token Reuse Detection', () => {
       data: { usedAt: new Date(Date.now() - 2 * 60_000) },
     });
 
-    // Replay the SAME (now-used, aged) refresh → trips reuse detection.
+    // Replay the SAME (now-used, aged) refresh. Reuse revoke-all is DISABLED for
+    // now (it false-positived on legit single-device use), so the replay just
+    // rejects the stale token — no all-device logout, no security alert.
     const replay = await request(app)
       .post('/v1/auth/refresh')
       .send({ refreshToken: firstRefresh });
     expect(replay.status).toBe(401);
-    expect(replay.body.error.details.reason).toBe('token_reuse_detected');
+    expect(replay.body.error.details.reason).toBe('refresh_rotated');
+    expect(replay.body.error.code).not.toBe('TOKEN_REUSE_DETECTED');
 
-    // Every refresh for this user is revoked, including the second-pair one.
+    // Other sessions survive — the second-pair token is NOT revoked.
     const rows = await testPrisma.refreshToken.findMany({
       where: { userId: login.body.user.id },
     });
-    expect(rows.every((r) => r.revokedAt !== null)).toBe(true);
+    expect(rows.some((r) => r.revokedAt === null)).toBe(true);
 
-    // Notifier received the security alert.
-    expect(notifier.findForUser(login.body.user.id, 'security_alert_reuse').length).toBeGreaterThan(0);
+    // No alarming security-alert notification is pushed.
+    expect(notifier.findForUser(login.body.user.id, 'security_alert_reuse').length).toBe(0);
   });
 });
 

@@ -8,6 +8,7 @@ import { autoCompleteTripsJob } from './jobs/autoCompleteTrips.js';
 import { tripReminder2hJob } from './jobs/tripReminder2h.js';
 import { expireBookingsJob } from './jobs/expireBookings.js';
 import { cleanupStaleLikesJob } from './jobs/cleanupStaleLikes.js';
+import { expireRequestsJob } from './jobs/expireRequests.js';
 import { escalateComplaintsJob } from './jobs/escalateComplaints.js';
 import { recalcCancellationsJob } from './jobs/recalcCancellations.js';
 import { hardDeleteUsersJob } from './jobs/hardDeleteUsers.js';
@@ -24,6 +25,7 @@ export function buildScheduler(prisma: PrismaClient, notifier?: Notifier): CronS
   scheduler.register(tripReminder2hJob);
   scheduler.register(expireBookingsJob);
   scheduler.register(cleanupStaleLikesJob);
+  scheduler.register(expireRequestsJob);
   scheduler.register(escalateComplaintsJob);
   scheduler.register(recalcCancellationsJob);
   scheduler.register(hardDeleteUsersJob);
