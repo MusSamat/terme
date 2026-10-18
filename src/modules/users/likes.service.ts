@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
-import { toListItem, type TripListItem } from '@/modules/trips/trips.service.js';
+import { toListItem, tripInclude, type TripListItem } from '@/modules/trips/trips.service.js';
 import {
-  passengerSelect,
+  requestInclude,
   toDTO,
   type PassengerRequestDTO,
 } from '@/modules/passenger-requests/passenger-requests.service.js';
@@ -41,28 +41,7 @@ export function createLikesService(prisma: PrismaClient) {
       if (type === 'trip') {
         const rows = await prisma.trip.findMany({
           where: { id: { in: ids } },
-          include: {
-            car: true,
-            driver: {
-              select: {
-                id: true,
-                name: true,
-                avatarUrl: true,
-                rating: true,
-                ratingCount: true,
-                driverProfile: {
-                  select: {
-                    carMake: true,
-                    carModel: true,
-                    carColor: true,
-                    carPlate: true,
-                    carPhotoPath: true,
-                    verificationStatus: true,
-                  },
-                },
-              },
-            },
-          },
+          include: tripInclude,
         });
         const byId = new Map(rows.map((r) => [r.id, r]));
         // Preserve like order; skip listings that were deleted meanwhile.
@@ -73,7 +52,7 @@ export function createLikesService(prisma: PrismaClient) {
       } else {
         const rows = await prisma.passengerRequest.findMany({
           where: { id: { in: ids } },
-          include: { passenger: { select: passengerSelect } },
+          include: requestInclude,
         });
         const byId = new Map(rows.map((r) => [r.id, r]));
         items = page.flatMap((l) => {

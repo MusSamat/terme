@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { CITY } from '../../../tests/cities.js';
 import request from 'supertest';
 import type { Express } from 'express';
 import { testPrisma } from '../../../tests/setup.js';
@@ -85,8 +86,8 @@ describe('DELETE /v1/cars/:id — remove a car', () => {
       data: {
         driverId: u.id,
         carId: created.body.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() + 4 * 60 * 60_000),
         estimatedDurationMin: 600,

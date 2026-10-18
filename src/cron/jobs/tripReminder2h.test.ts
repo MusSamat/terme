@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { CITY } from '../../../tests/cities.js';
 import { testPrisma } from '../../../tests/setup.js';
 import { tripReminder2hJob } from './tripReminder2h.js';
 import { createUser, createVerifiedDriver } from '../../../tests/factories.js';
@@ -14,8 +15,8 @@ describe('trip_reminder_2h cron', () => {
     const t = await testPrisma.trip.create({
       data: {
         driverId: d.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() + opts.whenMs),
         estimatedDurationMin: 600,

@@ -43,7 +43,7 @@ export function createUsersRouter(prisma: PrismaClient, notifier: Notifier): Rou
     asyncHandler(async (req, res) => {
       const updated = await service.updateSelf(
         req.user!.id,
-        req.body as { name?: string; language?: 'ru' | 'kg'; termsAccepted?: true },
+        req.body as Parameters<typeof service.updateSelf>[1],
       );
       res.json(updated);
     }),

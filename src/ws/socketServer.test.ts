@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { CITY } from '../../tests/cities.js';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
@@ -71,8 +72,8 @@ async function setupAcceptedBooking() {
   const trip = await testPrisma.trip.create({
     data: {
       driverId: driver.id,
-      originCity: 'Бишкек',
-      destinationCity: 'Ош',
+      originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+      destinationCity: 'Ош', destinationCityId: CITY['Ош'],
       originAddress: 'x',
       departureAt: new Date(Date.now() + 4 * 60 * 60_000),
       estimatedDurationMin: 600,
@@ -187,8 +188,8 @@ describe('WS real-time notifications (#11)', () => {
     const trip = await testPrisma.trip.create({
       data: {
         driverId: driver.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() + 4 * 60 * 60_000),
         estimatedDurationMin: 600,
@@ -222,8 +223,8 @@ describe('WS real-time notifications (#11)', () => {
     const trip = await testPrisma.trip.create({
       data: {
         driverId: driver.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() + 4 * 60 * 60_000),
         estimatedDurationMin: 600,

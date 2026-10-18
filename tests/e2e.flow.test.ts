@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { CITY } from './cities.js';
 import request from 'supertest';
 import crypto from 'node:crypto';
 import type { Express } from 'express';
@@ -36,8 +37,8 @@ describe('E2E — full ride lifecycle (driver + 2 passengers)', () => {
       .set(auth(driver.accessToken))
       .set('Idempotency-Key', crypto.randomUUID())
       .send({
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'Западный автовокзал',
         departureAt: new Date(Date.now() + 4 * 60 * 60_000).toISOString(),
         seatsTotal: 2,

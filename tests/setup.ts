@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach } from 'vitest';
 import { execSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
+import { CITY_IDS } from './cities.js';
 
 /**
  * Test harness:
@@ -34,7 +35,8 @@ const prisma = new PrismaClient({
 });
 
 // Tables to truncate between tests. Order doesn't matter with `RESTART IDENTITY
-// CASCADE`. Keep in sync with schema.prisma.
+// CASCADE`. Keep in sync with schema.prisma. `cities` is NOT truncated: the
+// migrations load the real SOATE directory, tests reference it via CITY[name].
 const TABLES = [
   'admin_actions',
   'cron_locks',
@@ -55,7 +57,7 @@ const TABLES = [
   'driver_profiles',
   'users',
   'admins',
-  'cities',
+  'trip_stops',
 ];
 
 beforeAll(async () => {
@@ -65,6 +67,13 @@ beforeAll(async () => {
     env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL },
   });
   await prisma.$connect();
+  // name_ru → id of the most prominent settlement with that name.
+  const rows = await prisma.city.findMany({
+    where: { isSearchable: true },
+    orderBy: [{ priority: 'asc' }, { id: 'desc' }],
+    select: { id: true, nameRu: true },
+  });
+  for (const r of rows) CITY_IDS[r.nameRu] = r.id;
 });
 
 beforeEach(async () => {

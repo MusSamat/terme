@@ -1,4 +1,5 @@
 import { beforeEach, describe, it, expect } from 'vitest';
+import { CITY } from './cities.js';
 import request from 'supertest';
 import type { Express } from 'express';
 import { testPrisma } from './setup.js';
@@ -122,8 +123,8 @@ describe('passenger-request engagement (HTTP, polymorphic)', () => {
     const pr = await testPrisma.passengerRequest.create({
       data: {
         passengerId: passenger.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         seatsNeeded: 1,
         departureDate: new Date(Date.now() + 24 * 60 * 60_000),
       },
@@ -167,8 +168,8 @@ describe('self-like guard', () => {
     const pr = await testPrisma.passengerRequest.create({
       data: {
         passengerId: passenger.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         seatsNeeded: 1,
         departureDate: new Date(Date.now() + 28 * 60 * 60_000),
       },

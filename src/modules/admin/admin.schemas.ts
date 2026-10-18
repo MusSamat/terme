@@ -38,16 +38,31 @@ export const BlockBody = z.object({
 });
 
 // ─── Cities ──────────────────────────────────────────────────────────────
-export const CityCreateBody = z.object({
-  nameRu: z.string().trim().min(1).max(100),
-  nameKg: z.string().trim().min(1).max(100),
-  region: z.string().trim().max(50).optional(),
-  lat: z.number().min(-90).max(90).optional(),
-  lng: z.number().min(-180).max(180).optional(),
-  isActive: z.boolean().optional(),
+export const CitiesAdminQuery = z.object({
+  q: z.string().trim().min(1).max(100).optional(),
+  type: z
+    .enum(['oblast', 'capital', 'city_district', 'raion', 'city', 'town', 'aiyl_aimak', 'village', 'airport'])
+    .optional(),
+  // true → only places whose point is the aiyl-aimak centroid (to fix by hand).
+  approx: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
+  cursor: z.string().regex(/^\d+$/).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
-export const CityUpdateBody = CityCreateBody.partial();
+export const CityUpdateBody = z
+  .object({
+    nameRu: z.string().trim().min(1).max(150),
+    nameKg: z.string().trim().min(1).max(150),
+    aliases: z.array(z.string().trim().min(1).max(150)).max(20),
+    lat: z.number().min(39).max(43.5),
+    lng: z.number().min(69).max(81),
+    isActive: z.boolean(),
+  })
+  .partial()
+  .refine((v) => (v.lat === undefined) === (v.lng === undefined), {
+    message: 'lat and lng go together',
+    path: ['lng'],
+  });
 
 export const CityIdParam = z.object({ id: z.coerce.number().int().positive() });
 

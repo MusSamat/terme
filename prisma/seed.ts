@@ -7,15 +7,14 @@ process.loadEnvFile?.('.env');
 
 /**
  * Seed the initial data required for a working system:
- *   • Kyrgyzstan cities (TZ §1.4 launch routes + follow-ups)
  *   • First superadmin (TZ §6.2 — email + temp password from env; must change
  *     on first login)
  *
  * Idempotent — safe to re-run.
  */
 
-// Cities are seeded separately via: npm run db:seed:cities (scripts/seed-cities.ts)
-// which loads 624 cities from claude/locations.json. Nothing to do here.
+// The settlements directory is loaded by migrations (official SOATE, see
+// scripts/cities) — nothing to seed here.
 
 async function seedSuperadmin(prisma: PrismaClient): Promise<void> {
   const email = (process.env.SUPERADMIN_EMAIL ?? 'superadmin@popytchik.kg').toLowerCase();

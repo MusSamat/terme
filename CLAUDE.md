@@ -18,16 +18,15 @@
 
 ## 1. Стек — не изобретай
 
-### Backend (`/backend`)
+### Backend (этот репозиторий, `terme`)
 ```
 Node.js 20 LTS + TypeScript (strict: true)
 Express.js 4.x          — HTTP сервер
 Prisma 5.x              — ORM, все запросы через него
 PostgreSQL 16           — единственная БД
-Socket.IO 4.x           — WebSocket (отдельный процесс от API)
+Socket.IO 4.x           — WebSocket (тот же процесс и порт, что и API)
 Zod 3.x                 — валидация входящих данных
 jsonwebtoken 9.x        — JWT подпись/верификация (наши токены)
-jose                    — верификация внешних JWT (Google/Apple JWKS)
 bcryptjs                — хеши паролей и OTP (не нативный bcrypt)
 otplib                  — TOTP для админов
 grammy                  — Telegram Bot API
@@ -44,30 +43,29 @@ Vitest                  — тесты
 - Kafka / RabbitMQ (не в MVP)
 - любой новый npm пакет
 
-### Mini App (`/mini-app`)
+### Web (`terme_ft`, отдельный репо) — сайт + админка (Telegram Mini App удалён)
 ```
-React 18 + TypeScript
-Vite 5               — сборщик
+Next.js 14 (App Router) + React 18 + TypeScript
 Zustand              — state management
 TanStack Query       — server state + кэш
-react-hook-form      — формы
-Zod                  — валидация форм
-i18next              — локализация (ru | ky)
+react-hook-form + Zod — формы
+next-intl            — локализация (ru | kg)
 Tailwind CSS         — стили
 axios                — HTTP
 socket.io-client     — WebSocket
+Leaflet              — карты (OpenStreetMap)
 ```
 
-### Flutter (`/mobile`)
+### Flutter (`terme_mb`, отдельный репо)
 ```
 Flutter 3.x + Dart
 Riverpod             — state management
 go_router            — навигация
-dio + retrofit       — HTTP
+dio                  — HTTP
 socket_io_client     — WebSocket
 Hive                 — offline queue + кэш
 flutter_secure_storage — токены
-easy_localization    — ru | ky
+easy_localization    — ru | kg
 flutter_map          — карты (OpenStreetMap)
 image_picker + flutter_image_compress — фото документов
 ```
@@ -77,42 +75,41 @@ image_picker + flutter_image_compress — фото документов
 ## 2. Архитектура — не нарушай
 
 ```
-/backend
+/terme (backend)
   /src
     /modules         — код по фичам: <name>/<name>.routes.ts + <name>.service.ts + <name>.schemas.ts
                        .routes.ts  — Express роутер (HTTP + Zod валидация, тонкий)
                        .service.ts — бизнес-логика + прямые Prisma запросы
                        .schemas.ts — Zod схемы входящих данных
     /middleware      — auth, rateLimit, validate, errorHandler, requestContext
-    /lib             — утилиты (jwt, bcrypt, whatsapp, telegram, i18n, errors)
+    /lib             — утилиты (jwt, bcrypt, whatsapp, telegramBot, places, i18n, errors)
     /config          — env (Zod-валидированный process.env)
     /cron            — cron задачи (jobs/)
-    /ws              — Socket.IO handlers (отдельный процесс)
+    /ws              — Socket.IO handlers (тот же процесс)
     /locales         — ru.json, kg.json (тексты ошибок)
-    server.ts        — createApp(prisma, notifier, bot): монтирует все роутеры
+    server.ts        — createApp(prisma, notifier): монтирует все роутеры
     openapi.ts       — hand-authored OpenAPI спека
   prisma/
     schema.prisma
     migrations/
+  scripts/cities/    — сборка справочника сёл (СОАТЕ + OSM) → prisma/seed-data/*.json
 
-/mini-app
+/terme_ft (web)
   /src
-    /api             — axios инстанс + все запросы
+    /app             — страницы (App Router), /admin — админка
+    /components      — UI и фичи
+    /lib             — api (axios), утилиты, deferred action
     /store           — Zustand stores
-    /hooks           — кастомные хуки
-    /pages           — экраны
-    /components      — переиспользуемые компоненты
-    /lib             — утилиты (deferredAction, auth, etc.)
-    /locales         — ru.json, ky.json
+    /messages        — ru.json, kg.json
 
-/mobile
+/terme_mb (mobile)
   /lib
-    /api             — dio клиент + retrofit
+    /api             — dio клиент + сервисы
     /providers       — Riverpod providers
     /models          — data классы
     /screens         — экраны
     /widgets         — переиспользуемые виджеты
-    /l10n            — ru.json, ky.json
+  /assets/l10n       — ru.json, kg.json
 ```
 
 **Правило слоёв (Controller/Repository слоёв НЕТ):**
@@ -180,12 +177,15 @@ await prisma.trip.update(...); // race condition!
 ```
 Access token:  15 минут (JWT_ACCESS_TTL_MIN), в памяти (не localStorage)
 Refresh token: продлевается при активности, разлогин через 30 дней без входа
-OTP:           bcrypt(code) в БД, НЕ plain text
-OTP-канал:     WhatsApp (шаблон terme_otp) — lib/whatsapp.sendWhatsappOtp.
-               НЕ отправляется при повторном входе (phone+password), только при
-               регистрации / привязке / смене номера.
-Telegram Mini App: вход по подписанному initData — POST /auth/telegram
-               (провизорный токен, если телефон ещё не привязан).
+OTP:           bcrypt(code) в БД, НЕ plain text; канал — только WhatsApp
+               (шаблон terme_otp, lib/whatsapp.sendWhatsappOtp). SMS / Telegram /
+               Google / Apple входа НЕТ.
+Регистрация:   номер → код WhatsApp → имя (+ пароль на вебе) — POST /auth/register
+Вход web:      телефон + пароль (POST /auth/phone/login), без OTP;
+               «забыли пароль» / первый пароль — код WhatsApp → /auth/phone/reset-password
+Вход mobile:   всегда код WhatsApp (POST /auth/phone/verify), без пароля
+Telegram-бот:  кнопка «Поделиться номером» (Telegram-подтверждённый контакт) →
+               users.telegram_id; дальше бот узнаёт пользователя сам.
 ```
 
 **Token Reuse Detection — grace-окно + revoke-all вне него (auth.session.ts):**
@@ -246,7 +246,7 @@ t('trips.create.title')
 ```
 
 Локали: `ru` и `kg` (см. lib/i18n.ts; legacy-тег `ky` в Accept-Language
-маппится на `kg`). Файл `src/locales/ky.json` — устаревший, не используется.
+маппится на `kg`).
 
 Backend: `src/locales/{ru,kg}.json` хранят только тексты ошибок (`errors.<CODE>`),
 резолвятся в errorHandler по Accept-Language. При добавлении нового текста:
@@ -325,7 +325,8 @@ Backend: `src/locales/{ru,kg}.json` хранят только тексты ош�
 ❌ Менять schema.prisma без создания миграции
 ❌ Прямой SQL без параметров — SQL injection
 ❌ sessionStorage для refresh токена — только memory/secure storage
-❌ Слать OTP (WhatsApp) при повторном входе — вход по phone+password без OTP
+❌ Слать OTP на вебе при обычном входе — веб входит по паролю (mobile — по коду)
+❌ Хранить место поездки/заявки строкой — только city id (FK на cities)
 ```
 
 ---
@@ -333,20 +334,23 @@ Backend: `src/locales/{ru,kg}.json` хранят только тексты ош�
 ## 12. Быстрый справочник команд
 
 ```bash
-# Backend — корень ЭТОГО репозитория (mini-app и mobile — отдельные репо)
+# Backend — корень ЭТОГО репозитория (terme_ft и terme_mb — отдельные репо)
 npx prisma migrate dev --name "описание"   # новая миграция
 npx prisma generate                         # regenerate client
 npx prisma studio                           # GUI для БД
 npm run dev                                 # запуск dev
 npm test                                    # тесты
 
-# Mini App
-cd mini-app
-npm run dev                                 # Vite dev server
+# Web
+cd ../terme_ft
+npm run dev                                 # Next.js dev server
 npm run build                               # production build
 
+# Справочник сёл (СОАТЕ + OSM) — пересобрать данные
+python3 scripts/cities/build-cities.py && python3 scripts/cities/build-areas.py
+
 # Flutter
-cd mobile
+cd ../terme_mb
 flutter run -d chrome                       # web (для UI разработки)
 flutter run -d <device_id>                  # на устройстве
 flutter pub get                             # установить зависимости

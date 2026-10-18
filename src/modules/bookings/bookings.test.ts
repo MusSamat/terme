@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { CITY } from '../../../tests/cities.js';
 import request from 'supertest';
 import type { Express } from 'express';
 import { testPrisma } from '../../../tests/setup.js';
@@ -26,8 +27,8 @@ async function createActiveTrip(opts: {
   const trip = await testPrisma.trip.create({
     data: {
       driverId: opts.driverId,
-      originCity: 'Бишкек',
-      destinationCity: 'Ош',
+      originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+      destinationCity: 'Ош', destinationCityId: CITY['Ош'],
       originAddress: 'x',
       departureAt,
       estimatedDurationMin: 600,

@@ -36,6 +36,8 @@ model User {
   // ratings (they used to be overwritten). Always ≥ 0; grows, never auto-decays.
   ratingPenalty    Decimal   @default(0.00) @map("rating_penalty") @db.Decimal(4, 2)
   language         String    @default("ru") @db.VarChar(2)
+  // passenger | driver — what home leads with on every client (web, mobile, bot).
+  preferredMode    String    @default("passenger") @map("preferred_mode") @db.VarChar(10)
   isBlocked        Boolean   @default(false) @map("is_blocked")
   blockedReason    String?   @map("blocked_reason")
   // Web sign-in only; mobile signs in by WhatsApp code. NULL = no password yet
@@ -114,21 +116,32 @@ model DriverProfile {
 }
 
 // ─── Trips ────────────────────────────────────────────────────────────
-// status: active | completed | cancelled
+// status: active | direct | completed | cancelled
+//   direct = private ride created by accepting a passenger-request offer
 model Trip {
   id                   String    @id @default(uuid()) @db.Uuid
   driverId             String    @map("driver_id") @db.Uuid
   // The car this trip rides on (Phase 1 multi-auto). Nullable for legacy trips
   // created before the cars table — their car falls back to driver_profiles.
   carId                String?   @map("car_id") @db.Uuid
-  originCity           String    @map("origin_city") @db.VarChar(50)
-  destinationCity      String    @map("destination_city") @db.VarChar(50)
-  originAddress        String    @map("origin_address") @db.VarChar(200)
+  // intercity | airport (derived: an endpoint is an airport place). Airport
+  // transfers skip the one-trip-per-route-per-day rule.
+  kind                 String    @default("intercity") @db.VarChar(10)
+  originCityId         Int       @map("origin_city_id")
+  destinationCityId    Int       @map("destination_city_id")
+  // Display snapshot of the place name (name_ru) — the ids are the truth.
+  originCity           String    @map("origin_city") @db.VarChar(150)
+  destinationCity      String    @map("destination_city") @db.VarChar(150)
+  // Optional exact meeting points (map pin + note). NULL → the city itself.
+  originAddress        String?   @map("origin_address") @db.VarChar(200)
   originLat            Float?    @map("origin_lat")
   originLng            Float?    @map("origin_lng")
-  pickupCities         String[]  @default([]) @map("pickup_cities")
-  dropoffCities        String[]  @default([]) @map("dropoff_cities")
-  waypoints            Json      @default("[]")
+  destinationAddress   String?   @map("destination_address") @db.VarChar(200)
+  destinationLat       Float?    @map("destination_lat")
+  destinationLng       Float?    @map("destination_lng")
+  // Area of the pin inside Бишкек / Ош, derived server-side from lat/lng.
+  originAreaId         Int?      @map("origin_area_id")
+  destinationAreaId    Int?      @map("destination_area_id")
   departureAt          DateTime  @map("departure_at") @db.Timestamptz(6)
   departureFlexible    Boolean   @default(false) @map("departure_flexible")
   // «Выезд примерно 06:00–11:00»: departureAt = window start, this = window end.
@@ -155,18 +168,40 @@ model Trip {
   updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   version              Int       @default(1)
 
-  driver   User      @relation("TripDriver", fields: [driverId], references: [id])
-  car      Car?      @relation(fields: [carId], references: [id], onDelete: SetNull)
-  bookings Booking[]
-  ratings  Rating[]
+  driver      User       @relation("TripDriver", fields: [driverId], references: [id])
+  car         Car?       @relation(fields: [carId], references: [id], onDelete: SetNull)
+  origin      City       @relation("TripOrigin", fields: [originCityId], references: [id])
+  destination City       @relation("TripDestination", fields: [destinationCityId], references: [id])
+  originArea      CityArea? @relation("TripOriginArea", fields: [originAreaId], references: [id], onDelete: SetNull)
+  destinationArea CityArea? @relation("TripDestinationArea", fields: [destinationAreaId], references: [id], onDelete: SetNull)
+  stops       TripStop[]
+  bookings    Booking[]
+  ratings     Rating[]
 
+  // Partial search / route-day unique indexes on the city ids live in raw SQL
+  // (migration 20261018130000): idx_trips_active_search, idx_trips_active_destination,
+  // idx_trips_route_day_unique.
   @@index([driverId])
-  @@index([status])
   @@index([departureAt])
-  @@index([originCity, destinationCity, departureAt, status], map: "idx_trips_search")
-  @@index([pickupCities], map: "idx_trips_pickup_cities", type: Gin)
-  @@index([dropoffCities], map: "idx_trips_dropoff_cities", type: Gin)
+  @@index([carId])
   @@map("trips")
+}
+
+// Extra places on a trip's route: pickup = the driver can still board
+// passengers there (origin side), dropoff = can drop them (destination side).
+model TripStop {
+  id       String @id @default(uuid()) @db.Uuid
+  tripId   String @map("trip_id") @db.Uuid
+  cityId   Int    @map("city_id")
+  kind     String @db.VarChar(10) // pickup | dropoff
+  position Int    @db.SmallInt
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  city City @relation(fields: [cityId], references: [id])
+
+  @@unique([tripId, kind, cityId], map: "trip_stops_trip_kind_city_key")
+  @@index([cityId, kind])
+  @@map("trip_stops")
 }
 
 // ─── Bookings ─────────────────────────────────────────────────────────
@@ -338,44 +373,75 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
-// ─── Cities / administrative divisions (KG directory) ─────────────────
-// B-hybrid: a parent_id tree (oblast → raion → aiyl aimak → settlement)
-// PLUS denormalized ancestor names for fast flat search & disambiguation.
-// `type` doubles as the hierarchy level: oblast | raion | aiyl_aimak |
-// city | town | village | hamlet. Non-leaf admin rows have isSearchable=false
-// so autocomplete only returns real settlements. OSM-sourced rows carry osmId.
+// ─── Settlements directory (official SOATE 2026) ──────────────────────
+// Tree: oblast → raion → aiyl_aimak → village; capital (Бишкек, Ош) and city
+// (oblast-significance) sit under an oblast, town under a raion. oblast_id /
+// raion_id are denormalized ancestors for display and "nearby" lookups.
+// Built by scripts/cities/build-cities.py; soate_code is the stable key.
+// Raw-SQL extras (migration 20261018130000): kg_fold() generated *_folded
+// columns + pg_trgm GIN indexes for autocomplete, cities_lat_lng_idx.
 model City {
-  id              Int      @id @default(autoincrement())
-  osmId           BigInt?  @unique @map("osm_id")
-  osmType         String?  @map("osm_type") @db.VarChar(10)
-  type            String   @db.VarChar(20)
-  parentId        Int?     @map("parent_id")
-  parent          City?    @relation("CityTree", fields: [parentId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  children        City[]   @relation("CityTree")
-  isSearchable    Boolean  @default(true) @map("is_searchable")
-  nameRu          String   @map("name_ru") @db.VarChar(150)
-  nameKg          String   @map("name_kg") @db.VarChar(150)
-  nameEn          String?  @map("name_en") @db.VarChar(150)
-  regionId        Int?     @map("region_id")
-  regionNameRu    String?  @map("region_name_ru") @db.VarChar(100)
-  regionNameKg    String?  @map("region_name_kg") @db.VarChar(100)
-  districtId      Int?     @map("district_id")
-  districtNameRu  String?  @map("district_name_ru") @db.VarChar(100)
-  districtNameKg  String?  @map("district_name_kg") @db.VarChar(100)
-  aiylAimakNameRu String?  @map("aiyl_aimak_name_ru") @db.VarChar(100)
-  aiylAimakNameKg String?  @map("aiyl_aimak_name_kg") @db.VarChar(100)
-  lat             Float?
-  lng             Float?
-  prompt          String[]
-  priority        Int      @default(0)
-  isActive        Boolean  @default(true) @map("is_active")
+  id           Int      @id @default(autoincrement())
+  // SOATE code; "osm:<id>" for villages SOATE does not list separately (Бостери).
+  soateCode    String   @unique @map("soate_code") @db.VarChar(20)
+  // oblast | capital | city_district | raion | city | town | aiyl_aimak | village | airport
+  type         String   @db.VarChar(20)
+  parentId     Int?     @map("parent_id")
+  oblastId     Int?     @map("oblast_id")
+  raionId      Int?     @map("raion_id")
+  nameRu       String   @map("name_ru") @db.VarChar(150)
+  nameKg       String   @map("name_kg") @db.VarChar(150)
+  // Alternative spellings / former names used by search (e.g. «Жалал-Абад» → Манас).
+  aliases      String[] @default([])
+  lat          Float?
+  lng          Float?
+  // true = no exact point known, lat/lng is the aiyl aimak centroid.
+  coordApprox  Boolean  @default(false) @map("coord_approx")
+  osmType      String?  @map("osm_type") @db.VarChar(10)
+  osmId        BigInt?  @map("osm_id")
+  priority     Int      @default(0)
+  isSearchable Boolean  @default(true) @map("is_searchable")
+  isActive     Boolean  @default(true) @map("is_active")
 
-  @@index([regionId])
-  @@index([isActive])
+  parent   City?  @relation("CityTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children City[] @relation("CityTree")
+  oblast   City?  @relation("CityOblast", fields: [oblastId], references: [id], onDelete: SetNull)
+  oblastOf City[] @relation("CityOblast")
+  raion    City?  @relation("CityRaion", fields: [raionId], references: [id], onDelete: SetNull)
+  raionOf  City[] @relation("CityRaion")
+
+  areas        CityArea[]
+  tripsFrom    Trip[]             @relation("TripOrigin")
+  tripsTo      Trip[]             @relation("TripDestination")
+  tripStops    TripStop[]
+  requestsFrom PassengerRequest[] @relation("RequestOrigin")
+  requestsTo   PassengerRequest[] @relation("RequestDestination")
+
   @@index([parentId])
-  @@index([type])
-  @@index([isSearchable])
+  @@index([raionId])
   @@map("cities")
+}
+
+// Жилмассивы / микрорайоны of Бишкек and Ош (scripts/cities/build-areas.py).
+// Label meeting-point pins («Бишкек · Асанбай») and power the pin search.
+model CityArea {
+  id      Int     @id @default(autoincrement())
+  cityId  Int     @map("city_id")
+  nameRu  String  @map("name_ru") @db.VarChar(150)
+  nameKg  String  @map("name_kg") @db.VarChar(150)
+  lat     Float
+  lng     Float
+  osmType String? @map("osm_type") @db.VarChar(10)
+  osmId   BigInt? @map("osm_id")
+
+  city             City               @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  tripOrigins      Trip[]             @relation("TripOriginArea")
+  tripDestinations Trip[]             @relation("TripDestinationArea")
+  requestOrigins   PassengerRequest[] @relation("RequestOriginArea")
+  requestDestinations PassengerRequest[] @relation("RequestDestinationArea")
+
+  @@index([cityId])
+  @@map("city_areas")
 }
 
 // ─── Admins (separate from users) ─────────────────────────────────────
@@ -549,8 +615,23 @@ model CronLock {
 model PassengerRequest {
   id              String    @id @default(uuid()) @db.Uuid
   passengerId     String    @map("passenger_id") @db.Uuid
-  originCity      String    @map("origin_city") @db.VarChar(50)
-  destinationCity String    @map("destination_city") @db.VarChar(50)
+  kind            String    @default("intercity") @db.VarChar(10) // intercity | airport
+  // Arriving / departing flight («SU 1882») so the driver can meet the passenger.
+  flightNumber    String?   @map("flight_number") @db.VarChar(10)
+  originCityId    Int       @map("origin_city_id")
+  destinationCityId Int     @map("destination_city_id")
+  // Display snapshot of the place name (name_ru) — the ids are the truth.
+  originCity      String    @map("origin_city") @db.VarChar(150)
+  destinationCity String    @map("destination_city") @db.VarChar(150)
+  // Optional exact pickup / drop-off points (map pin + note).
+  originAddress   String?   @map("origin_address") @db.VarChar(200)
+  originLat       Float?    @map("origin_lat")
+  originLng       Float?    @map("origin_lng")
+  destinationAddress String? @map("destination_address") @db.VarChar(200)
+  destinationLat  Float?    @map("destination_lat")
+  destinationLng  Float?    @map("destination_lng")
+  originAreaId    Int?      @map("origin_area_id")
+  destinationAreaId Int?    @map("destination_area_id")
   seatsNeeded     Int       @default(1) @map("seats_needed") @db.SmallInt
   departureDate   DateTime  @map("departure_date") @db.Timestamptz(6)
   flexible        Boolean   @default(false)
@@ -561,12 +642,17 @@ model PassengerRequest {
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  passenger  User                        @relation(fields: [passengerId], references: [id])
-  responses  PassengerRequestResponse[]
+  passenger   User                       @relation(fields: [passengerId], references: [id])
+  origin      City                       @relation("RequestOrigin", fields: [originCityId], references: [id])
+  destination City                       @relation("RequestDestination", fields: [destinationCityId], references: [id])
+  originArea      CityArea?              @relation("RequestOriginArea", fields: [originAreaId], references: [id], onDelete: SetNull)
+  destinationArea CityArea?              @relation("RequestDestinationArea", fields: [destinationAreaId], references: [id], onDelete: SetNull)
+  responses   PassengerRequestResponse[]
 
+  // idx_requests_open_search / idx_requests_open_destination /
+  // idx_requests_route_day_unique: raw SQL (migration 20261018130000).
   @@index([status, departureDate])
   @@index([passengerId])
-  @@index([originCity, destinationCity, status])
   @@map("passenger_requests")
 }
 

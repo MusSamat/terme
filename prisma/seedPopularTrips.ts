@@ -23,6 +23,7 @@
 process.loadEnvFile?.('.env');
 
 import { PrismaClient, Prisma } from '@prisma/client';
+import { placeResolver } from './seedPlaces.js';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -161,6 +162,7 @@ async function seed(): Promise<void> {
   //    the (driver, route, KG-day) unique index never trips.
   const trips: Prisma.TripCreateManyInput[] = [];
 
+  const place = await placeResolver(prisma, ROUTES.flatMap((r) => [r.origin, r.destination]));
   for (let rIdx = 0; rIdx < ROUTES.length; rIdx++) {
     const r = ROUTES[rIdx]!;
     for (let d = 0; d < DAYS; d++) {
@@ -174,6 +176,8 @@ async function seed(): Promise<void> {
         const peak = hour <= 10 ? 50 : hour >= 18 ? 30 : 0; // morning/evening bump
         trips.push({
           driverId,
+          originCityId: place(r.origin),
+          destinationCityId: place(r.destination),
           originCity: r.origin,
           destinationCity: r.destination,
           originAddress: STATIONS[(rIdx + s) % STATIONS.length]!,
@@ -184,7 +188,7 @@ async function seed(): Promise<void> {
           pricePerSeat: r.price + peak + d * 10,
           luggage: LUGGAGE[(rIdx + s) % LUGGAGE.length]!,
           status: 'active',
-          preferences: { no_smoking: true, music: s % 2 === 0 } as Prisma.InputJsonValue,
+          preferences: { smoking: false, music: s % 2 === 0 } as Prisma.InputJsonValue,
           comment: COMMENTS[(rIdx + d + s) % COMMENTS.length]!,
           // "Popular" flavour — some views/likes so the feed feels alive.
           viewsCount: 8 + ((rIdx * 13 + d * 5 + s * 3) % 90),

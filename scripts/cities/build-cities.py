@@ -47,6 +47,26 @@ RU_OVERRIDES = {
 # Extra search aliases (lower case) for renamed or commonly misspelled places.
 ALIASES = {'41703410000010': ['жалал-абад', 'джалал-абад', 'jalal-abad']}
 
+# Airports are places of their own (airport transfers are a first-class ride
+# kind). Parent = the raion they lie in (SOATE code), else the oblast.
+AIRPORTS = [
+    {'iata': 'FRU', 'parent': '41708222000000', 'name_ru': 'Аэропорт «Манас»',
+     'name_kg': '«Манас» эл аралык аэропорту', 'lat': 43.0613, 'lng': 74.4776,
+     'aliases': ['аэропорт манас', 'манас аэропорт', 'fru', 'airport manas']},
+    {'iata': 'OSS', 'parent': '41706226000000', 'name_ru': 'Аэропорт Ош',
+     'name_kg': 'Ош эл аралык аэропорту', 'lat': 40.609, 'lng': 72.7932,
+     'aliases': ['аэропорт ош', 'ош аэропорт', 'oss', 'airport osh']},
+    {'iata': 'IKU', 'parent': '41702215000000', 'name_ru': 'Аэропорт «Иссык-Куль» (Тамчы)',
+     'name_kg': '«Ысык-Көл» эл аралык аэропорту (Тамчы)', 'lat': 42.5881, 'lng': 76.7136,
+     'aliases': ['аэропорт тамчы', 'аэропорт иссык-куль', 'iku']},
+    {'iata': 'JUL', 'parent': '41703000000000', 'name_ru': 'Аэропорт Жалал-Абад',
+     'name_kg': 'Жалал-Абад аэропорту', 'lat': 40.9441, 'lng': 72.9775,
+     'aliases': ['аэропорт жалал-абад', 'аэропорт манас жалал-абад']},
+    {'iata': 'BAT', 'parent': '41705214000000', 'name_ru': 'Аэропорт Баткен',
+     'name_kg': 'Баткен аэропорту', 'lat': 40.0433, 'lng': 70.8380,
+     'aliases': ['аэропорт баткен']},
+]
+
 LATIN_TO_CYR = str.maketrans('ABCEHKMOPTXaceopxy', 'АВСЕНКМОРТХасеорху')
 
 
@@ -316,6 +336,89 @@ def main():
                 n['lng'] = round(sum(k['lng'] for k in kids) / len(kids), 5)
                 n['match'] = 'centroid'
 
+    # SOATE lists a few villages under two aiyl aimaks; when both rows land on
+    # the same OSM point under the same name, keep one (prefer town over village).
+    rank_type = {'capital': 0, 'city': 1, 'town': 2, 'village': 3}
+    by_point = defaultdict(list)
+    for n in settlements:
+        if n['osm_id']:
+            by_point[(n['osm_id'], key(n['name_ru']))].append(n)
+    for twins in by_point.values():
+        if len(twins) < 2:
+            continue
+        twins.sort(key=lambda t: (rank_type[t['type']], t['code']))
+        keep = twins[0]
+        for t in twins[1:]:
+            keep.setdefault('merged', []).append(t['code'])
+            keep['merged'] += t.get('merged', [])
+            nodes.remove(t)
+            settlements.remove(t)
+
+    # OSM villages SOATE doesn't list separately (resorts like Бостери, villages
+    # merged into other units): fix an approximate SOATE row of the same name in
+    # that raion, otherwise add the village under its raion (code 'osm:<id>').
+    raion_by_rel = {}
+    for n in nodes:
+        if n['type'] == 'raion':
+            rel = osm_raion_by_key.get(rkey(RAION_ALIASES.get(n['name_kg'], n['name_kg'])))
+            if rel:
+                raion_by_rel[rel] = n
+    placed_pts = [(n['lat'], n['lng']) for n in settlements if n['lat'] is not None]
+    used_osm = {n['osm_id'] for n in settlements if n['osm_id']}
+    for p in places:
+        pid = str(p['id'])
+        if p['place'] not in ('village', 'town') or not p.get('name') or not pid.startswith('n') or pid in used_osm:
+            continue
+        raion = raion_by_rel.get(p['raion'])
+        if not raion or re.search(r'станция|дачи|парк|новостройк|кольцо|гидропарт', p['name'] + (p.get('name_ru') or ''), re.I):
+            continue
+        nearest = min(((km((p['lat'], p['lng']), (n['lat'], n['lng'])), n) for n in settlements
+                       if n['lat'] is not None), default=(99, None), key=lambda t: t[0])
+        if nearest[0] <= 2:
+            # A different OSM name on (almost) the same spot is a former name
+            # («Семёновка» → Кожояр): searchable alias of that place.
+            if not (p['keys'] & {key(nearest[1]['name_ru']), key(nearest[1]['name_kg'])}):
+                nearest[1].setdefault('extra_aliases', set()).update(
+                    x for x in (p.get('name_ru'), p.get('name')) if x)
+            continue
+        # Same name already in the raion within 15 km → it's that place.
+        if any(n['lat'] is not None and n['code'][:8] == raion['code'][:8]
+               and p['keys'] & {key(n['name_kg']), key(n['_ru_raw']), key(n['name_ru'])}
+               and km((p['lat'], p['lng']), (n['lat'], n['lng'])) <= 15 for n in settlements):
+            continue
+        twin = next((n for n in settlements if n['lat'] is None and n['code'][:8] == raion['code'][:8]
+                     and p['keys'] & {key(n['name_kg']), key(n['_ru_raw'])}), None)
+        if twin:
+            set_coords(twin, p, 'osm-extra')
+            review[:] = [r for r in review if r is not twin]
+            continue
+        ru = ru_name(clean(p.get('name_ru') or p['name']))
+        kg = clean(p.get('name_ky') or p['name'])
+        n = {'code': f"osm:{pid}", 'type': 'village', 'parent': raion['code'], 'name_ru': ru, 'name_kg': kg,
+             '_ru_raw': ru, 'lat': p['lat'], 'lng': p['lng'], 'osm_id': pid, 'match': 'osm-only'}
+        nodes.append(n)
+        settlements.append(n)
+        by_code[n['code']] = n
+        placed_pts.append((p['lat'], p['lng']))
+
+    # A village named like a nearby city / town (≤ 5 km) is the same place
+    # listed twice (e.g. Кочкор-Ата) — keep the city / town.
+    for c in [n for n in settlements if n['type'] in ('capital', 'city', 'town') and n['lat'] is not None]:
+        for v in [n for n in settlements if n['type'] == 'village' and n['lat'] is not None]:
+            if key(v['name_ru']) == key(c['name_ru']) and km((c['lat'], c['lng']), (v['lat'], v['lng'])) <= 5:
+                c.setdefault('merged', []).append(v['code'])
+                nodes.remove(v)
+                settlements.remove(v)
+
+    for a in AIRPORTS:
+        n = {'code': f"airport:{a['iata']}", 'type': 'airport', 'parent': a['parent'],
+             'name_ru': a['name_ru'], 'name_kg': a['name_kg'], '_ru_raw': a['name_ru'],
+             'lat': a['lat'], 'lng': a['lng'], 'osm_id': None, 'match': 'manual',
+             'extra_aliases': set(a['aliases'] + ['аэропорт', 'airport'])}
+        nodes.append(n)
+        settlements.append(n)
+        by_code[n['code']] = n
+
     # Settlements without a point get their aiyl aimak's centroid, flagged
     # as approximate so the map can draw them differently.
     for n in settlements:
@@ -332,6 +435,7 @@ def main():
     for n in nodes:
         o = by_id.get(n['osm_id']) or {}
         alias = {x.lower() for x in (o.get('name_ru'), o.get('old'), o.get('alt'), n['_ru_raw']) if x}
+        alias |= {x.lower() for x in n.get('extra_aliases', ())}
         alias |= set(ALIASES.get(n['code'], []))
         alias -= {n['name_ru'].lower(), n['name_kg'].lower()}
         rows.append({
@@ -340,7 +444,7 @@ def main():
             'lat': n['lat'], 'lng': n['lng'], 'approx': bool(n.get('approx')),
             'osm_id': n['osm_id'], 'aliases': sorted(alias),
             'merged_codes': n.get('merged', []),
-            'searchable': n['type'] in ('capital', 'city', 'town', 'village'),
+            'searchable': n['type'] in ('capital', 'city', 'town', 'village', 'airport'),
         })
     OUT_JSON.write_text(json.dumps(rows, ensure_ascii=False, indent=0) + '\n', encoding='utf-8')
 

@@ -627,7 +627,8 @@
 "approx": false,
 "osm_id": "n1867508176",
 "aliases": [
-"жергез"
+"жергез",
+"кара-кыз"
 ],
 "merged_codes": [],
 "searchable": true
@@ -673,7 +674,9 @@
 "approx": false,
 "osm_id": "n297583738",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41702225825090"
+],
 "searchable": true
 },
 {
@@ -990,7 +993,9 @@
 "aliases": [
 "джети-огуз"
 ],
-"merged_codes": [],
+"merged_codes": [
+"41702210820040"
+],
 "searchable": true
 },
 {
@@ -1019,23 +1024,6 @@
 "osm_id": "n1363448626",
 "aliases": [
 "джеле-дебе"
-],
-"merged_codes": [],
-"searchable": true
-},
-{
-"code": "41702210820040",
-"parent": "41702210820000",
-"type": "village",
-"name_ru": "Жети-Огуз (курорт)",
-"name_kg": "Жети-Өгүз (курорт)",
-"lat": 42.430726,
-"lng": 78.213972,
-"approx": false,
-"osm_id": "n297333847",
-"aliases": [
-"джети-огуз",
-"джети-огуз (курорт)"
 ],
 "merged_codes": [],
 "searchable": true
@@ -1123,7 +1111,9 @@
 "lng": 78.23844,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"комсомольское"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -1677,7 +1667,9 @@
 "lng": 77.54,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"семёновка"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -1967,7 +1959,9 @@
 "lng": 76.97553,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"бает"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -2222,7 +2216,9 @@
 "lng": 76.949074,
 "approx": false,
 "osm_id": "n2013410378",
-"aliases": [],
+"aliases": [
+"кара-суу"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -2849,7 +2845,9 @@
 "lng": 78.565529,
 "approx": false,
 "osm_id": "n297583465",
-"aliases": [],
+"aliases": [
+"кайнар"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -2893,7 +2891,9 @@
 "lng": 78.69712,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"кара-чункур"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -2910,20 +2910,6 @@
 "aliases": [
 "каркара"
 ],
-"merged_codes": [],
-"searchable": true
-},
-{
-"code": "41702225825090",
-"parent": "41702225825000",
-"type": "village",
-"name_ru": "Кен-Суу",
-"name_kg": "Кең-Суу",
-"lat": 42.755333,
-"lng": 78.727378,
-"approx": false,
-"osm_id": "n297583738",
-"aliases": [],
 "merged_codes": [],
 "searchable": true
 },
@@ -3988,7 +3974,9 @@
 "approx": false,
 "osm_id": "n2347554636",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41703220812290"
+],
 "searchable": true
 },
 {
@@ -4294,7 +4282,9 @@
 "approx": false,
 "osm_id": "w1484222964",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41703220830020"
+],
 "searchable": true
 },
 {
@@ -4326,7 +4316,9 @@
 "aliases": [
 "катар-джангак"
 ],
-"merged_codes": [],
+"merged_codes": [
+"41703207830110"
+],
 "searchable": true
 },
 {
@@ -4690,7 +4682,9 @@
 "lng": 72.841666666,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"гава"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -4704,20 +4698,6 @@
 "lng": 72.86908,
 "approx": false,
 "osm_id": "r20274326",
-"aliases": [],
-"merged_codes": [],
-"searchable": true
-},
-{
-"code": "41703207830110",
-"parent": "41703207830000",
-"type": "village",
-"name_ru": "Катар-Жангак",
-"name_kg": "Катар-Жаңгак",
-"lat": 41.235973,
-"lng": 72.861468,
-"approx": false,
-"osm_id": "w1484207820",
 "aliases": [],
 "merged_codes": [],
 "searchable": true
@@ -4894,7 +4874,10 @@
 "lng": 72.224354,
 "approx": false,
 "osm_id": "n2426329955",
-"aliases": [],
+"aliases": [
+"коргон-дёбё",
+"коргон-дөбө"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -5749,7 +5732,9 @@
 "lng": 72.080555555,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"кызыл-жар"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -5820,7 +5805,9 @@
 "approx": false,
 "osm_id": "n296218974",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41703215825050"
+],
 "searchable": true
 },
 {
@@ -5834,7 +5821,9 @@
 "approx": false,
 "osm_id": "n894437175",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41703215819100"
+],
 "searchable": true
 },
 {
@@ -5981,22 +5970,6 @@
 "osm_id": "n2300671882",
 "aliases": [
 "ууру-джар"
-],
-"merged_codes": [],
-"searchable": true
-},
-{
-"code": "41703215819100",
-"parent": "41703215819000",
-"type": "village",
-"name_ru": "Шамалды-Сай",
-"name_kg": "Шамалды-Сай",
-"lat": 41.198677,
-"lng": 72.180238,
-"approx": false,
-"osm_id": "n894437175",
-"aliases": [
-"шамалдуу-сай"
 ],
 "merged_codes": [],
 "searchable": true
@@ -6200,20 +6173,6 @@
 "aliases": [
 "джаны-кыштак"
 ],
-"merged_codes": [],
-"searchable": true
-},
-{
-"code": "41703215825050",
-"parent": "41703215825000",
-"type": "village",
-"name_ru": "Кочкор-Ата",
-"name_kg": "Кочкор-Ата",
-"lat": 41.065793,
-"lng": 72.484328,
-"approx": false,
-"osm_id": "r19801563",
-"aliases": [],
 "merged_codes": [],
 "searchable": true
 },
@@ -7017,7 +6976,10 @@
 "lng": 73.006136,
 "approx": false,
 "osm_id": "r19721737",
-"aliases": [],
+"aliases": [
+"чёкё-дёбё",
+"чөкө-дөбө"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -7194,7 +7156,9 @@
 "approx": false,
 "osm_id": "n2347061354",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41703220830190"
+],
 "searchable": true
 },
 {
@@ -7277,7 +7241,9 @@
 "lng": 72.969167,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"масадан"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -7368,22 +7334,9 @@
 "approx": false,
 "osm_id": null,
 "aliases": [
-"кара-джыгач"
+"кара-джыгач",
+"кыр-джол"
 ],
-"merged_codes": [],
-"searchable": true
-},
-{
-"code": "41703220812290",
-"parent": "41703220812000",
-"type": "village",
-"name_ru": "Таш-Булак",
-"name_kg": "Таш-Булак",
-"lat": 40.949369,
-"lng": 73.029172,
-"approx": false,
-"osm_id": "n2347554636",
-"aliases": [],
 "merged_codes": [],
 "searchable": true
 },
@@ -7628,21 +7581,9 @@
 "approx": false,
 "osm_id": "n1934853864",
 "aliases": [],
-"merged_codes": [],
-"searchable": true
-},
-{
-"code": "41703220830020",
-"parent": "41703220830000",
-"type": "village",
-"name_ru": "Ак-Булак",
-"name_kg": "Ак-Булак",
-"lat": 41.186551,
-"lng": 73.048333,
-"approx": false,
-"osm_id": "w1484222964",
-"aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41703220845040"
+],
 "searchable": true
 },
 {
@@ -7874,20 +7815,6 @@
 "searchable": true
 },
 {
-"code": "41703220830190",
-"parent": "41703220830000",
-"type": "village",
-"name_ru": "Таштак",
-"name_kg": "Таштак",
-"lat": 40.873211,
-"lng": 73.044589,
-"approx": false,
-"osm_id": "n2347061354",
-"aliases": [],
-"merged_codes": [],
-"searchable": true
-},
-{
 "code": "41703220830200",
 "parent": "41703220830000",
 "type": "village",
@@ -7898,7 +7825,9 @@
 "approx": false,
 "osm_id": "n2346938812",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41703220845100"
+],
 "searchable": true
 },
 {
@@ -8102,20 +8031,6 @@
 "searchable": true
 },
 {
-"code": "41703220845040",
-"parent": "41703220845000",
-"type": "village",
-"name_ru": "Бостон",
-"name_kg": "Бостон",
-"lat": 41.022785,
-"lng": 72.968981,
-"approx": false,
-"osm_id": "n1934853864",
-"aliases": [],
-"merged_codes": [],
-"searchable": true
-},
-{
 "code": "41703220845050",
 "parent": "41703220845000",
 "type": "village",
@@ -8185,20 +8100,6 @@
 "lng": 72.957214,
 "approx": false,
 "osm_id": "n2346938811",
-"aliases": [],
-"merged_codes": [],
-"searchable": true
-},
-{
-"code": "41703220845100",
-"parent": "41703220845000",
-"type": "village",
-"name_ru": "Мундуз",
-"name_kg": "Мундуз",
-"lat": 40.853474,
-"lng": 72.893891,
-"approx": false,
-"osm_id": "n2346938812",
 "aliases": [],
 "merged_codes": [],
 "searchable": true
@@ -8511,7 +8412,10 @@
 "lng": 73.90821,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"aral",
+"кёкирим"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -8923,7 +8827,10 @@
 "lng": 73.432521,
 "approx": false,
 "osm_id": "n1639631231",
-"aliases": [],
+"aliases": [
+"джар-таш",
+"жар-таш"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -9145,10 +9052,10 @@
 "type": "village",
 "name_ru": "Кетерме",
 "name_kg": "Көтөрмө",
-"lat": 41.81989,
-"lng": 73.17368,
-"approx": true,
-"osm_id": null,
+"lat": 41.803947,
+"lng": 73.898625,
+"approx": false,
+"osm_id": "n2426336475",
 "aliases": [],
 "merged_codes": [],
 "searchable": true
@@ -9749,7 +9656,9 @@
 "lng": 71.240278,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"сумсар"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -9899,7 +9808,9 @@
 "lng": 74.53722,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"осовиахим"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -11604,7 +11515,9 @@
 "lng": 75.3151,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"кара-булун"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -13207,11 +13120,14 @@
 "type": "town",
 "name_ru": "Раззаков",
 "name_kg": "Раззаков",
-"lat": 39.95132,
-"lng": 69.6964,
-"approx": true,
-"osm_id": null,
-"aliases": [],
+"lat": 39.836139,
+"lng": 69.53123,
+"approx": false,
+"osm_id": "n271667086",
+"aliases": [
+"исфана",
+"тайлан"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -13982,7 +13898,9 @@
 "lng": 71.342444,
 "approx": false,
 "osm_id": "n1389335636",
-"aliases": [],
+"aliases": [
+"кичи-айдаркен"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -13998,7 +13916,11 @@
 "osm_id": "n1381827494",
 "aliases": [
 "кадамджай",
-"фрунзе"
+"пульгон",
+"пүлгөн",
+"таш-кыя",
+"фрунзе",
+"чал-таш"
 ],
 "merged_codes": [],
 "searchable": true
@@ -14640,7 +14562,9 @@
 "approx": false,
 "osm_id": "n6533660966",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41705258840110"
+],
 "searchable": true
 },
 {
@@ -14668,7 +14592,9 @@
 "approx": false,
 "osm_id": "n6549005926",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41705258825140"
+],
 "searchable": true
 },
 {
@@ -15002,20 +14928,6 @@
 "searchable": true
 },
 {
-"code": "41705258825140",
-"parent": "41705258825000",
-"type": "village",
-"name_ru": "Кара-Добо",
-"name_kg": "Кара-Дөбө",
-"lat": 40.230497,
-"lng": 71.973934,
-"approx": false,
-"osm_id": "n6549005926",
-"aliases": [],
-"merged_codes": [],
-"searchable": true
-},
-{
 "code": "41705258825150",
 "parent": "41705258825000",
 "type": "village",
@@ -15153,7 +15065,9 @@
 "lng": 71.551871,
 "approx": false,
 "osm_id": "n12166172190",
-"aliases": [],
+"aliases": [
+"курманжан-датка"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -15650,20 +15564,6 @@
 "searchable": true
 },
 {
-"code": "41705258840110",
-"parent": "41705258840000",
-"type": "village",
-"name_ru": "Ынтымак",
-"name_kg": "Ынтымак",
-"lat": 40.262258,
-"lng": 71.652678,
-"approx": false,
-"osm_id": "n6533660966",
-"aliases": [],
-"merged_codes": [],
-"searchable": true
-},
-{
 "code": "41705258840120",
 "parent": "41705258840000",
 "type": "village",
@@ -15931,7 +15831,9 @@
 "approx": false,
 "osm_id": null,
 "aliases": [
-"ак-джай"
+"ак-джай",
+"уч-тёбе",
+"уч-төбө"
 ],
 "merged_codes": [],
 "searchable": true
@@ -16036,7 +15938,9 @@
 "lng": 73.40611,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"1-мая"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -16050,7 +15954,9 @@
 "lng": 73.511111,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"ак-телек"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -16765,7 +16671,9 @@
 "approx": false,
 "osm_id": "w1484551645",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41706211835080"
+],
 "searchable": true
 },
 {
@@ -17379,20 +17287,6 @@
 "searchable": true
 },
 {
-"code": "41706211835080",
-"parent": "41706211835000",
-"type": "village",
-"name_ru": "Телейкен",
-"name_kg": "Төлөйкөн",
-"lat": 40.444464,
-"lng": 72.565727,
-"approx": false,
-"osm_id": "w1484551645",
-"aliases": [],
-"merged_codes": [],
-"searchable": true
-},
-{
 "code": "41706226000000",
 "parent": "41706000000000",
 "type": "raion",
@@ -17416,7 +17310,9 @@
 "lng": 72.879913,
 "approx": false,
 "osm_id": "n295938290",
-"aliases": [],
+"aliases": [
+"киров"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -17516,7 +17412,9 @@
 "lng": 73.25862,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"кызыл-суу"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -17632,7 +17530,9 @@
 "lng": 72.90594,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"большевик"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -17660,7 +17560,9 @@
 "lng": 72.890135,
 "approx": false,
 "osm_id": "n2272253895",
-"aliases": [],
+"aliases": [
+"конурат"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -17730,7 +17632,9 @@
 "lng": 72.93248,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"жаны-чек"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -17946,7 +17850,10 @@
 "lng": 72.797425,
 "approx": false,
 "osm_id": "n1954458285",
-"aliases": [],
+"aliases": [
+"джаны-барак",
+"жаңы-барак"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -18066,7 +17973,10 @@
 "lng": 72.849642,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"джегенды",
+"тарыкчи"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -18306,7 +18216,9 @@
 "lng": 72.8176,
 "approx": false,
 "osm_id": "n1954462928",
-"aliases": [],
+"aliases": [
+"зарбдар"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -18432,7 +18344,10 @@
 "lng": 72.779379,
 "approx": false,
 "osm_id": "n1954446873",
-"aliases": [],
+"aliases": [
+"джаны-махалла",
+"жаңы-махалла"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -18503,7 +18418,9 @@
 "approx": false,
 "osm_id": "n13612183407",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41706226850040"
+],
 "searchable": true
 },
 {
@@ -18544,7 +18461,9 @@
 "lng": 72.956816,
 "approx": false,
 "osm_id": "n4440774147",
-"aliases": [],
+"aliases": [
+"курбан-кар"
+],
 "merged_codes": [
 "41706226835160"
 ],
@@ -18560,7 +18479,9 @@
 "lng": 73.008854,
 "approx": false,
 "osm_id": "n13612191547",
-"aliases": [],
+"aliases": [
+"ак-колот"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -18672,7 +18593,9 @@
 "lng": 72.98439,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"жаны-кызы"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -18714,7 +18637,9 @@
 "lng": 72.988918,
 "approx": false,
 "osm_id": "n13612114799",
-"aliases": [],
+"aliases": [
+"чарайгыр"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -18935,20 +18860,6 @@
 "searchable": true
 },
 {
-"code": "41706226850040",
-"parent": "41706226850000",
-"type": "village",
-"name_ru": "Курбан-Кара",
-"name_kg": "Курбан-Кара",
-"lat": 40.703723,
-"lng": 72.945937,
-"approx": false,
-"osm_id": "n13612183407",
-"aliases": [],
-"merged_codes": [],
-"searchable": true
-},
-{
 "code": "41706226850050",
 "parent": "41706226850000",
 "type": "village",
@@ -19042,7 +18953,9 @@
 "lng": 72.826388888,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"падаван"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -19141,6 +19054,7 @@
 "approx": false,
 "osm_id": "n297803397",
 "aliases": [
+"кругово",
 "эски-ноокат"
 ],
 "merged_codes": [],
@@ -19329,7 +19243,9 @@
 "aliases": [
 "им. калинина"
 ],
-"merged_codes": [],
+"merged_codes": [
+"41706242829040"
+],
 "searchable": true
 },
 {
@@ -19882,7 +19798,9 @@
 "lng": 72.675468,
 "approx": false,
 "osm_id": "w182957141",
-"aliases": [],
+"aliases": [
+"кётёрмё"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -19912,22 +19830,6 @@
 "osm_id": "n6283677085",
 "aliases": [
 "кара-ой лесхоз"
-],
-"merged_codes": [],
-"searchable": true
-},
-{
-"code": "41706242829040",
-"parent": "41706242829000",
-"type": "village",
-"name_ru": "Кара-Таш",
-"name_kg": "Кара-Таш",
-"lat": 40.215185,
-"lng": 72.641478,
-"approx": false,
-"osm_id": "n1933319234",
-"aliases": [
-"им. калинина"
 ],
 "merged_codes": [],
 "searchable": true
@@ -20068,7 +19970,9 @@
 "lng": 72.686998,
 "approx": false,
 "osm_id": "n1420100052",
-"aliases": [],
+"aliases": [
+"жатан"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -20096,7 +20000,9 @@
 "lng": 72.644228,
 "approx": false,
 "osm_id": "w1484819286",
-"aliases": [],
+"aliases": [
+"им. чапаева"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -20684,7 +20590,9 @@
 "lng": 72.628543,
 "approx": false,
 "osm_id": "n13613943090",
-"aliases": [],
+"aliases": [
+"беш-тал"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -21030,7 +20938,9 @@
 "lng": 73.461928,
 "approx": false,
 "osm_id": "n4409501680",
-"aliases": [],
+"aliases": [
+"жаны-талаа"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -21362,7 +21272,9 @@
 "lng": 73.73528,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"карасу"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -21956,7 +21868,9 @@
 "lng": 73.260678,
 "approx": false,
 "osm_id": "w446472850",
-"aliases": [],
+"aliases": [
+"касык-алма"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -21984,7 +21898,9 @@
 "lng": 73.362183,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"уч-капчак"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -21998,7 +21914,9 @@
 "lng": 73.306532,
 "approx": false,
 "osm_id": "n13614009274",
-"aliases": [],
+"aliases": [
+"курбу-таш"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -22012,7 +21930,9 @@
 "lng": 73.287356,
 "approx": false,
 "osm_id": "n13614000169",
-"aliases": [],
+"aliases": [
+"киров"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -22255,7 +22175,9 @@
 "lng": 73.347936,
 "approx": false,
 "osm_id": "n4417264293",
-"aliases": [],
+"aliases": [
+"ден-булак 2"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -22685,7 +22607,9 @@
 "lng": 73.376672,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"корсеты"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -22869,7 +22793,9 @@
 "lng": 73.137207,
 "approx": false,
 "osm_id": "n2501102338",
-"aliases": [],
+"aliases": [
+"старая покровка"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -23151,7 +23077,9 @@
 "lng": 73.8,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"сары-булак"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -23221,7 +23149,9 @@
 "lng": 73.218101,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"кайнар"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -23988,7 +23918,9 @@
 "lng": 71.690175,
 "approx": false,
 "osm_id": "w1484199882",
-"aliases": [],
+"aliases": [
+"бак кайың"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -24691,7 +24623,9 @@
 "lng": 71.61111,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"бала-саруу"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -25981,7 +25915,9 @@
 "lng": 74.491544,
 "approx": false,
 "osm_id": "n1747602024",
-"aliases": [],
+"aliases": [
+"кайырма"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -26414,7 +26350,8 @@
 "approx": false,
 "osm_id": "n1936430374",
 "aliases": [
-"джар-башы"
+"джар-башы",
+"подснежник"
 ],
 "merged_codes": [],
 "searchable": true
@@ -26690,6 +26627,7 @@
 "approx": false,
 "osm_id": "w303594155",
 "aliases": [
+"киршелк",
 "новопокровка (часть)"
 ],
 "merged_codes": [],
@@ -27101,7 +27039,9 @@
 "lng": 74.711198,
 "approx": false,
 "osm_id": "w168409694",
-"aliases": [],
+"aliases": [
+"дачное"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -27846,7 +27786,10 @@
 "lng": 75.896443,
 "approx": false,
 "osm_id": "w70563341",
-"aliases": [],
+"aliases": [
+"джол-булак",
+"жол-булак"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -27860,7 +27803,9 @@
 "lng": 75.748934,
 "approx": false,
 "osm_id": "n1416885874",
-"aliases": [],
+"aliases": [
+"нур"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -28386,7 +28331,9 @@
 "lng": 74.01,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"жарды-суу"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -28852,7 +28799,9 @@
 "lng": 73.812497,
 "approx": false,
 "osm_id": "n2422558559",
-"aliases": [],
+"aliases": [
+"кара-булак"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -29126,7 +29075,9 @@
 "lng": 73.53333333,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"чалдыбар"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -29225,7 +29176,8 @@
 "approx": false,
 "osm_id": "n858944769",
 "aliases": [
-"ак-джол"
+"ак-джол",
+"степное"
 ],
 "merged_codes": [],
 "searchable": true
@@ -29650,7 +29602,9 @@
 "lng": 74.34806,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"алмалуу"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -29849,7 +29803,9 @@
 "approx": false,
 "osm_id": "n1942352118",
 "aliases": [],
-"merged_codes": [],
+"merged_codes": [
+"41708222840010"
+],
 "searchable": true
 },
 {
@@ -29892,7 +29848,9 @@
 "lng": 74.244441,
 "approx": false,
 "osm_id": "w182814138",
-"aliases": [],
+"aliases": [
+"ден-алыш"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -30023,20 +29981,6 @@
 "aliases": [],
 "merged_codes": [],
 "searchable": false
-},
-{
-"code": "41708222840010",
-"parent": "41708222840000",
-"type": "village",
-"name_ru": "Сокулук",
-"name_kg": "Сокулук",
-"lat": 42.856527,
-"lng": 74.2983,
-"approx": false,
-"osm_id": "n1942352118",
-"aliases": [],
-"merged_codes": [],
-"searchable": true
 },
 {
 "code": "41708222840020",
@@ -30324,7 +30268,9 @@
 "lng": 75.44444444,
 "approx": false,
 "osm_id": null,
-"aliases": [],
+"aliases": [
+"кара-дёбё"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -30604,7 +30550,8 @@
 "approx": false,
 "osm_id": null,
 "aliases": [
-"ленин-джол"
+"ленин-джол",
+"султан"
 ],
 "merged_codes": [],
 "searchable": true
@@ -30619,7 +30566,9 @@
 "lng": 75.282072,
 "approx": false,
 "osm_id": "n1756924928",
-"aliases": [],
+"aliases": [
+"акчалуу"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -30843,7 +30792,9 @@
 "lng": 74.850078,
 "approx": false,
 "osm_id": "n240470047",
-"aliases": [],
+"aliases": [
+"люксембург"
+],
 "merged_codes": [],
 "searchable": true
 },
@@ -30944,6 +30895,1218 @@
 "approx": false,
 "osm_id": "n4791369250",
 "aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n273177653",
+"parent": "41706207000000",
+"type": "village",
+"name_ru": "Гульча",
+"name_kg": "Гүлчө",
+"lat": 40.311816,
+"lng": 73.443834,
+"approx": false,
+"osm_id": "n273177653",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n276265710",
+"parent": "41702215000000",
+"type": "village",
+"name_ru": "Бостери",
+"name_kg": "Бостери",
+"lat": 42.663087,
+"lng": 77.187536,
+"approx": false,
+"osm_id": "n276265710",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n297329345",
+"parent": "41702205000000",
+"type": "village",
+"name_ru": "Таш-Кыя",
+"name_kg": "Таш-Кыя",
+"lat": 42.463006,
+"lng": 78.384178,
+"approx": false,
+"osm_id": "n297329345",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n300254780",
+"parent": "41704230000000",
+"type": "village",
+"name_ru": "Доскулу",
+"name_kg": "Доскулу",
+"lat": 42.033062,
+"lng": 74.982925,
+"approx": false,
+"osm_id": "n300254780",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n302558613",
+"parent": "41706207000000",
+"type": "village",
+"name_ru": "Кок Су",
+"name_kg": "Икизяк",
+"lat": 39.72335,
+"lng": 73.782164,
+"approx": false,
+"osm_id": "n302558613",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n702032565",
+"parent": "41708203000000",
+"type": "village",
+"name_ru": "Маевка",
+"name_kg": "Маевка",
+"lat": 42.920461,
+"lng": 74.569485,
+"approx": false,
+"osm_id": "n702032565",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n894437150",
+"parent": "41708222000000",
+"type": "village",
+"name_ru": "Новопавловка",
+"name_kg": "Новопавловка",
+"lat": 42.870556,
+"lng": 74.486667,
+"approx": false,
+"osm_id": "n894437150",
+"aliases": [
+"ала-тоо",
+"ынтымак"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n988671413",
+"parent": "41704235000000",
+"type": "village",
+"name_ru": "Исакеев",
+"name_kg": "Исакеев",
+"lat": 42.181139,
+"lng": 75.771231,
+"approx": false,
+"osm_id": "n988671413",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1349916382",
+"parent": "41702220000000",
+"type": "village",
+"name_ru": "Ак-Олён",
+"name_kg": "Ак-Өлөң",
+"lat": 42.347928,
+"lng": 76.166903,
+"approx": false,
+"osm_id": "n1349916382",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1369282163",
+"parent": "41705258000000",
+"type": "village",
+"name_ru": "Караван",
+"name_kg": "Караван",
+"lat": 40.294929,
+"lng": 72.184747,
+"approx": false,
+"osm_id": "n1369282163",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1378041509",
+"parent": "41702215000000",
+"type": "village",
+"name_ru": "Бактуу-Долоноту",
+"name_kg": "Бактуу-Долоноту",
+"lat": 42.655505,
+"lng": 77.145736,
+"approx": false,
+"osm_id": "n1378041509",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1483379690",
+"parent": "41704220000000",
+"type": "village",
+"name_ru": "Караул-Тёбе",
+"name_kg": "Караул-Тёбе",
+"lat": 40.531706,
+"lng": 75.964221,
+"approx": false,
+"osm_id": "n1483379690",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1582762856",
+"parent": "41703207000000",
+"type": "village",
+"name_ru": "Абдраимов",
+"name_kg": "Абдираимов",
+"lat": 41.064755,
+"lng": 72.732987,
+"approx": false,
+"osm_id": "n1582762856",
+"aliases": [
+"советское"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1622456957",
+"parent": "41703220000000",
+"type": "village",
+"name_ru": "Сай",
+"name_kg": "Сай",
+"lat": 41.222343,
+"lng": 73.355634,
+"approx": false,
+"osm_id": "n1622456957",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1651673229",
+"parent": "41704230000000",
+"type": "village",
+"name_ru": "Кардыж-Арык",
+"name_kg": "Кардыдж-Арык",
+"lat": 42.051031,
+"lng": 74.772477,
+"approx": false,
+"osm_id": "n1651673229",
+"aliases": [
+"арал"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1651806709",
+"parent": "41704230000000",
+"type": "village",
+"name_ru": "Сары-Булак",
+"name_kg": "Сары-Булак",
+"lat": 42.031933,
+"lng": 74.518231,
+"approx": false,
+"osm_id": "n1651806709",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1659157253",
+"parent": "41704210000000",
+"type": "village",
+"name_ru": "Белкырчын",
+"name_kg": "Белкырчын",
+"lat": 41.190191,
+"lng": 74.566625,
+"approx": false,
+"osm_id": "n1659157253",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1659439032",
+"parent": "41704220000000",
+"type": "village",
+"name_ru": "Ак-Беит",
+"name_kg": "Ак-Беит",
+"lat": 40.863583,
+"lng": 75.144538,
+"approx": false,
+"osm_id": "n1659439032",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1727919426",
+"parent": "41708203000000",
+"type": "village",
+"name_ru": "Нижняя Ала-Арча",
+"name_kg": "Төмөнкү Ала-Арча",
+"lat": 42.927881,
+"lng": 74.603033,
+"approx": false,
+"osm_id": "n1727919426",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1727919483",
+"parent": "41708203000000",
+"type": "village",
+"name_ru": "Пригородное",
+"name_kg": "Пригородное",
+"lat": 42.903572,
+"lng": 74.53763,
+"approx": false,
+"osm_id": "n1727919483",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1747619135",
+"parent": "41708217000000",
+"type": "village",
+"name_ru": "Чон-Арык",
+"name_kg": "Чоң-Арык",
+"lat": 42.714912,
+"lng": 74.009604,
+"approx": false,
+"osm_id": "n1747619135",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1750118272",
+"parent": "41708222000000",
+"type": "village",
+"name_ru": "Село имени Фрунзе",
+"name_kg": "Фрунзе атындагы",
+"lat": 42.918523,
+"lng": 74.432578,
+"approx": false,
+"osm_id": "n1750118272",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1756924923",
+"parent": "41708213000000",
+"type": "village",
+"name_ru": "Подгорное",
+"name_kg": "Подгорное",
+"lat": 42.753238,
+"lng": 75.544011,
+"approx": false,
+"osm_id": "n1756924923",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1756932592",
+"parent": "41708213000000",
+"type": "village",
+"name_ru": "Бордунский",
+"name_kg": "Бордунский",
+"lat": 42.655276,
+"lng": 75.599929,
+"approx": false,
+"osm_id": "n1756932592",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1756932594",
+"parent": "41708213000000",
+"type": "village",
+"name_ru": "Кашка",
+"name_kg": "Кашка",
+"lat": 42.695723,
+"lng": 75.571245,
+"approx": false,
+"osm_id": "n1756932594",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1806849713",
+"parent": "41707220000000",
+"type": "village",
+"name_ru": "Ынтымак",
+"name_kg": "Ынтымак",
+"lat": 42.474693,
+"lng": 72.101963,
+"approx": false,
+"osm_id": "n1806849713",
+"aliases": [
+"калинин"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1815557012",
+"parent": "41708203000000",
+"type": "village",
+"name_ru": "Мыкан",
+"name_kg": "Мыкан",
+"lat": 42.938969,
+"lng": 74.655291,
+"approx": false,
+"osm_id": "n1815557012",
+"aliases": [
+"садовое"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1863867039",
+"parent": "41703211000000",
+"type": "village",
+"name_ru": "Кызыл-Капчыгай",
+"name_kg": "Кызыл-Капчыгай",
+"lat": 41.607796,
+"lng": 71.795992,
+"approx": false,
+"osm_id": "n1863867039",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1863867040",
+"parent": "41703211000000",
+"type": "village",
+"name_ru": "Жерге-Тал",
+"name_kg": "Жерге-Тал",
+"lat": 41.573439,
+"lng": 71.811112,
+"approx": false,
+"osm_id": "n1863867040",
+"aliases": [
+"джерге-тал"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1867462897",
+"parent": "41702205000000",
+"type": "village",
+"name_ru": "Маман",
+"name_kg": "Маман",
+"lat": 42.50682,
+"lng": 78.446559,
+"approx": false,
+"osm_id": "n1867462897",
+"aliases": [
+"октябрьское"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1868900001",
+"parent": "41708203000000",
+"type": "village",
+"name_ru": "Аламудун",
+"name_kg": "Аламүдүн",
+"lat": 42.910146,
+"lng": 74.636645,
+"approx": false,
+"osm_id": "n1868900001",
+"aliases": [
+"аламедин"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1882635288",
+"parent": "41705236000000",
+"type": "village",
+"name_ru": "Ак-Булак",
+"name_kg": "Ак-Булак",
+"lat": 39.799517,
+"lng": 69.528402,
+"approx": false,
+"osm_id": "n1882635288",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1882635306",
+"parent": "41705236000000",
+"type": "village",
+"name_ru": "Алтын-Бешик",
+"name_kg": "Алтын-Бешик",
+"lat": 39.811689,
+"lng": 69.614208,
+"approx": false,
+"osm_id": "n1882635306",
+"aliases": [
+"голбо"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1882635320",
+"parent": "41705236000000",
+"type": "village",
+"name_ru": "Самат",
+"name_kg": "Самат",
+"lat": 39.90972,
+"lng": 69.506795,
+"approx": false,
+"osm_id": "n1882635320",
+"aliases": [
+"ак-босого"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1882635344",
+"parent": "41705236000000",
+"type": "village",
+"name_ru": "Чымкен",
+"name_kg": "Чымкен",
+"lat": 39.877321,
+"lng": 69.502703,
+"approx": false,
+"osm_id": "n1882635344",
+"aliases": [
+"чимген"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1882818412",
+"parent": "41705214000000",
+"type": "village",
+"name_ru": "Кызыл-Жол",
+"name_kg": "Кызыл-Жол",
+"lat": 40.043187,
+"lng": 70.808379,
+"approx": false,
+"osm_id": "n1882818412",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1906421880",
+"parent": "41708203000000",
+"type": "village",
+"name_ru": "Лебединовка",
+"name_kg": "Лебединовка",
+"lat": 42.885596,
+"lng": 74.675534,
+"approx": false,
+"osm_id": "n1906421880",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1958672929",
+"parent": "41708203000000",
+"type": "village",
+"name_ru": "Восток",
+"name_kg": "Восток",
+"lat": 42.90545,
+"lng": 74.674531,
+"approx": false,
+"osm_id": "n1958672929",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1960479978",
+"parent": "41708209000000",
+"type": "village",
+"name_ru": "Калининское",
+"name_kg": "Калинин",
+"lat": 42.829611,
+"lng": 73.858364,
+"approx": false,
+"osm_id": "n1960479978",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1962464462",
+"parent": "41705258000000",
+"type": "village",
+"name_ru": "Жин-Жиген",
+"name_kg": "Джин-Джиген",
+"lat": 40.265119,
+"lng": 72.19388,
+"approx": false,
+"osm_id": "n1962464462",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n1964559310",
+"parent": "41702205000000",
+"type": "village",
+"name_ru": "Бурма-Суу",
+"name_kg": "Бурма-Суу",
+"lat": 42.463044,
+"lng": 78.343589,
+"approx": false,
+"osm_id": "n1964559310",
+"aliases": [
+"челпек",
+"чельпек"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2083171796",
+"parent": "41708203000000",
+"type": "village",
+"name_ru": "Луговое",
+"name_kg": "Луговое",
+"lat": 43.011854,
+"lng": 74.689356,
+"approx": false,
+"osm_id": "n2083171796",
+"aliases": [
+"ленинское 4"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2302532992",
+"parent": "41703215000000",
+"type": "village",
+"name_ru": "Кылчак-Талаа",
+"name_kg": "Кылчак-Талаа",
+"lat": 41.090793,
+"lng": 72.353743,
+"approx": false,
+"osm_id": "n2302532992",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2329436902",
+"parent": "41703207000000",
+"type": "village",
+"name_ru": "Киргиз-Гава",
+"name_kg": "Кыргыз-Каба",
+"lat": 41.157177,
+"lng": 72.885039,
+"approx": false,
+"osm_id": "n2329436902",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2347457528",
+"parent": "41703220000000",
+"type": "village",
+"name_ru": "Тайгараев",
+"name_kg": "Тайгараев",
+"lat": 41.0101,
+"lng": 73.035791,
+"approx": false,
+"osm_id": "n2347457528",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2347457547",
+"parent": "41703220000000",
+"type": "village",
+"name_ru": "Кызыл-Кыргызстан",
+"name_kg": "Кызыл-Кыргызстан",
+"lat": 40.997017,
+"lng": 73.013286,
+"approx": false,
+"osm_id": "n2347457547",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2347457562",
+"parent": "41703220000000",
+"type": "village",
+"name_ru": "Таш-Кутчу",
+"name_kg": "Таш-Кутчу",
+"lat": 40.977638,
+"lng": 73.044402,
+"approx": false,
+"osm_id": "n2347457562",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2426336473",
+"parent": "41703225000000",
+"type": "village",
+"name_ru": "Ак-Колот",
+"name_kg": "Ак-Колот",
+"lat": 41.777082,
+"lng": 73.922173,
+"approx": false,
+"osm_id": "n2426336473",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2426336474",
+"parent": "41703225000000",
+"type": "village",
+"name_ru": "Итсай",
+"name_kg": "Итсай",
+"lat": 41.646606,
+"lng": 72.51668,
+"approx": false,
+"osm_id": "n2426336474",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2504295490",
+"parent": "41702220000000",
+"type": "village",
+"name_ru": "Кёк-Мойнок-1",
+"name_kg": "Көк-Мойнок 1",
+"lat": 42.456561,
+"lng": 76.048207,
+"approx": false,
+"osm_id": "n2504295490",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2573469957",
+"parent": "41707225000000",
+"type": "village",
+"name_ru": "Новодонецкое",
+"name_kg": "Новодонецкий",
+"lat": 42.785412,
+"lng": 71.496857,
+"approx": false,
+"osm_id": "n2573469957",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2575314260",
+"parent": "41707215000000",
+"type": "village",
+"name_ru": "Куру-Маймак",
+"name_kg": "Куру-Маймак",
+"lat": 42.691339,
+"lng": 71.249436,
+"approx": false,
+"osm_id": "n2575314260",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n2705528479",
+"parent": "41703211000000",
+"type": "village",
+"name_ru": "Кашка-Суу",
+"name_kg": "Кашка-Суу",
+"lat": 41.579679,
+"lng": 71.676799,
+"approx": false,
+"osm_id": "n2705528479",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n3047185254",
+"parent": "41705236000000",
+"type": "village",
+"name_ru": "Лайлы",
+"name_kg": "Лайлы",
+"lat": 40.043456,
+"lng": 69.79138,
+"approx": false,
+"osm_id": "n3047185254",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n3072948847",
+"parent": "41705214000000",
+"type": "village",
+"name_ru": "Булак-Башы",
+"name_kg": "Булак-Башы",
+"lat": 40.088862,
+"lng": 70.814204,
+"approx": false,
+"osm_id": "n3072948847",
+"aliases": [
+"базар-башы"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n3081586018",
+"parent": "41706226000000",
+"type": "village",
+"name_ru": "Озгур",
+"name_kg": "Озгур",
+"lat": 40.449387,
+"lng": 72.855931,
+"approx": false,
+"osm_id": "n3081586018",
+"aliases": [
+"озгур (часть)",
+"телейкен",
+"төлөйкөн"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n3247359852",
+"parent": "41706226000000",
+"type": "village",
+"name_ru": "Жаны-Кыштак",
+"name_kg": "Жаны-Кыштак",
+"lat": 40.550805,
+"lng": 72.727548,
+"approx": false,
+"osm_id": "n3247359852",
+"aliases": [
+"коммунист"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n3547219943",
+"parent": "41703211000000",
+"type": "village",
+"name_ru": "Ак-Дёбё",
+"name_kg": "Ак-Дөбө",
+"lat": 41.520463,
+"lng": 71.750065,
+"approx": false,
+"osm_id": "n3547219943",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n3750815466",
+"parent": "41706207000000",
+"type": "village",
+"name_ru": "Ташкоро",
+"name_kg": "Ташкоро",
+"lat": 40.246523,
+"lng": 73.371539,
+"approx": false,
+"osm_id": "n3750815466",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n4053068238",
+"parent": "41708203000000",
+"type": "village",
+"name_ru": "Достук",
+"name_kg": "Достук",
+"lat": 42.917179,
+"lng": 74.516783,
+"approx": false,
+"osm_id": "n4053068238",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n4264585380",
+"parent": "41703225000000",
+"type": "village",
+"name_ru": "Кетмен-Тёбё",
+"name_kg": "Кетмен-Төбө",
+"lat": 41.731513,
+"lng": 73.12913,
+"approx": false,
+"osm_id": "n4264585380",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n4401325958",
+"parent": "41706255000000",
+"type": "village",
+"name_ru": "Кандуга",
+"name_kg": "Кандуга",
+"lat": 40.705668,
+"lng": 73.533683,
+"approx": false,
+"osm_id": "n4401325958",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n4414835642",
+"parent": "41706255000000",
+"type": "village",
+"name_ru": "Жийде",
+"name_kg": "Жийде",
+"lat": 40.963897,
+"lng": 73.356759,
+"approx": false,
+"osm_id": "n4414835642",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n4440901898",
+"parent": "41706226000000",
+"type": "village",
+"name_ru": "Эркин",
+"name_kg": "Эркин",
+"lat": 40.680871,
+"lng": 72.899433,
+"approx": false,
+"osm_id": "n4440901898",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n4442662275",
+"parent": "41706226000000",
+"type": "village",
+"name_ru": "Тельмана",
+"name_kg": "Тельмана",
+"lat": 40.688991,
+"lng": 72.863574,
+"approx": false,
+"osm_id": "n4442662275",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n4448822143",
+"parent": "41706226000000",
+"type": "village",
+"name_ru": "Кызыл-Кыштак",
+"name_kg": "Кызыл-Кыштак",
+"lat": 40.562585,
+"lng": 72.760841,
+"approx": false,
+"osm_id": "n4448822143",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n4453198525",
+"parent": "41706226000000",
+"type": "village",
+"name_ru": "Ишкаван",
+"name_kg": "Ишкаван",
+"lat": 40.527071,
+"lng": 72.74415,
+"approx": false,
+"osm_id": "n4453198525",
+"aliases": [
+"имени карла маркса"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n4533874050",
+"parent": "41708217000000",
+"type": "village",
+"name_ru": "Кара-Дөбө",
+"name_kg": "Кара-Дөбө",
+"lat": 42.801199,
+"lng": 74.179218,
+"approx": false,
+"osm_id": "n4533874050",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n5908525685",
+"parent": "41706207000000",
+"type": "village",
+"name_ru": "Жылы-Суу",
+"name_kg": "Жылы-Суу",
+"lat": 40.268113,
+"lng": 73.424032,
+"approx": false,
+"osm_id": "n5908525685",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n7695047241",
+"parent": "41704210000000",
+"type": "village",
+"name_ru": "Атабай-Чап",
+"name_kg": "Атабай-Чап",
+"lat": 41.165913,
+"lng": 74.594109,
+"approx": false,
+"osm_id": "n7695047241",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n10297828938",
+"parent": "41703220000000",
+"type": "village",
+"name_ru": "Ынтымак",
+"name_kg": "Ынтымак",
+"lat": 40.974244,
+"lng": 72.995911,
+"approx": false,
+"osm_id": "n10297828938",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n10677239563",
+"parent": "41702210000000",
+"type": "village",
+"name_ru": "Караколка",
+"name_kg": "Караколка",
+"lat": 41.489752,
+"lng": 77.36966,
+"approx": false,
+"osm_id": "n10677239563",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n10713536317",
+"parent": "41706211000000",
+"type": "village",
+"name_ru": "Гульбахор",
+"name_kg": "Гүльбахор",
+"lat": 40.490849,
+"lng": 72.665276,
+"approx": false,
+"osm_id": "n10713536317",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n12353191937",
+"parent": "41706207000000",
+"type": "village",
+"name_ru": "Кара-Суу",
+"name_kg": "Кара-Суу",
+"lat": 40.285718,
+"lng": 73.568203,
+"approx": false,
+"osm_id": "n12353191937",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n12353191940",
+"parent": "41706207000000",
+"type": "village",
+"name_ru": "Октябрь",
+"name_kg": "Октябрь",
+"lat": 40.258979,
+"lng": 73.583091,
+"approx": false,
+"osm_id": "n12353191940",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n12368370160",
+"parent": "41706226000000",
+"type": "village",
+"name_ru": "Бодур-Таш",
+"name_kg": "Бодур-Таш",
+"lat": 40.426764,
+"lng": 72.857412,
+"approx": false,
+"osm_id": "n12368370160",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "osm:n12969063887",
+"parent": "41705236000000",
+"type": "village",
+"name_ru": "Андархам",
+"name_kg": "Андархам",
+"lat": 40.007858,
+"lng": 69.844719,
+"approx": false,
+"osm_id": "n12969063887",
+"aliases": [],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "airport:FRU",
+"parent": "41708222000000",
+"type": "airport",
+"name_ru": "Аэропорт «Манас»",
+"name_kg": "«Манас» эл аралык аэропорту",
+"lat": 43.0613,
+"lng": 74.4776,
+"approx": false,
+"osm_id": null,
+"aliases": [
+"airport",
+"airport manas",
+"fru",
+"аэропорт",
+"аэропорт манас",
+"манас аэропорт"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "airport:OSS",
+"parent": "41706226000000",
+"type": "airport",
+"name_ru": "Аэропорт Ош",
+"name_kg": "Ош эл аралык аэропорту",
+"lat": 40.609,
+"lng": 72.7932,
+"approx": false,
+"osm_id": null,
+"aliases": [
+"airport",
+"airport osh",
+"oss",
+"аэропорт",
+"ош аэропорт"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "airport:IKU",
+"parent": "41702215000000",
+"type": "airport",
+"name_ru": "Аэропорт «Иссык-Куль» (Тамчы)",
+"name_kg": "«Ысык-Көл» эл аралык аэропорту (Тамчы)",
+"lat": 42.5881,
+"lng": 76.7136,
+"approx": false,
+"osm_id": null,
+"aliases": [
+"airport",
+"iku",
+"аэропорт",
+"аэропорт иссык-куль",
+"аэропорт тамчы"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "airport:JUL",
+"parent": "41703000000000",
+"type": "airport",
+"name_ru": "Аэропорт Жалал-Абад",
+"name_kg": "Жалал-Абад аэропорту",
+"lat": 40.9441,
+"lng": 72.9775,
+"approx": false,
+"osm_id": null,
+"aliases": [
+"airport",
+"аэропорт",
+"аэропорт манас жалал-абад"
+],
+"merged_codes": [],
+"searchable": true
+},
+{
+"code": "airport:BAT",
+"parent": "41705214000000",
+"type": "airport",
+"name_ru": "Аэропорт Баткен",
+"name_kg": "Баткен аэропорту",
+"lat": 40.0433,
+"lng": 70.838,
+"approx": false,
+"osm_id": null,
+"aliases": [
+"airport",
+"аэропорт"
+],
 "merged_codes": [],
 "searchable": true
 }

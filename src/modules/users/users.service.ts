@@ -33,6 +33,10 @@ export interface PublicUser {
 }
 
 export interface SelfUser extends PublicUser {
+  surname: string | null;
+  preferredMode: 'passenger' | 'driver';
+  // Web sign-in uses a password; false → offer «set a password» (WhatsApp code).
+  hasPassword: boolean;
   phone: string;
   phoneVerified: boolean;
   telegramLinked: boolean;
@@ -44,11 +48,20 @@ export interface SelfUser extends PublicUser {
   lastSeenAt: Date | null;
 }
 
+export interface UpdateSelfPatch {
+  name?: string;
+  surname?: string;
+  language?: 'ru' | 'kg';
+  bio?: string;
+  termsAccepted?: true;
+  preferredMode?: 'passenger' | 'driver';
+}
+
 export interface UsersService {
   getSelf(userId: string): Promise<SelfUser>;
   updateSelf(
     userId: string,
-    patch: { name?: string; language?: 'ru' | 'kg'; bio?: string; termsAccepted?: true },
+    patch: UpdateSelfPatch,
   ): Promise<SelfUser>;
   deleteSelf(userId: string): Promise<void>;
   getPublicProfile(userId: string): Promise<PublicUser>;
@@ -105,6 +118,9 @@ export function createUsersService(prisma: PrismaClient): UsersService {
       loyaltyPoints: user.loyaltyPoints,
       createdAt: user.createdAt,
       driverCar: null, // not needed for self view; use GET /users/:id for full profile
+      surname: user.surname,
+      preferredMode: user.preferredMode === 'driver' ? 'driver' : 'passenger',
+      hasPassword: user.passwordHash !== null,
       phone: publicPhone(user.phone),
       phoneVerified: user.phoneVerifiedAt !== null,
       telegramLinked: user.telegramId !== null,
@@ -121,13 +137,12 @@ export function createUsersService(prisma: PrismaClient): UsersService {
     return toSelf(user);
   }
 
-  async function updateSelf(
-    userId: string,
-    patch: { name?: string; language?: 'ru' | 'kg'; bio?: string; termsAccepted?: true },
-  ): Promise<SelfUser> {
+  async function updateSelf(userId: string, patch: UpdateSelfPatch): Promise<SelfUser> {
     await findActiveUser(userId);
     const data: Parameters<typeof prisma.user.update>[0]['data'] = {};
     if (patch.name !== undefined) data.name = patch.name;
+    if (patch.surname !== undefined) data.surname = patch.surname.length > 0 ? patch.surname : null;
+    if (patch.preferredMode !== undefined) data.preferredMode = patch.preferredMode;
     if (patch.language !== undefined) data.language = patch.language;
     if (patch.bio !== undefined) data.bio = patch.bio.length > 0 ? patch.bio : null;
     if (patch.termsAccepted === true) data.termsAcceptedAt = new Date();

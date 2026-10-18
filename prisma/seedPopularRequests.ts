@@ -23,6 +23,7 @@
 process.loadEnvFile?.('.env');
 
 import { PrismaClient, Prisma } from '@prisma/client';
+import { placeResolver } from './seedPlaces.js';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -131,6 +132,7 @@ async function seed(): Promise<void> {
   const requests: Prisma.PassengerRequestCreateManyInput[] = [];
   let skippedPast = 0;
 
+  const place = await placeResolver(prisma, ROUTES.flatMap((r) => [r.origin, r.destination]));
   for (let rIdx = 0; rIdx < ROUTES.length; rIdx++) {
     const r = ROUTES[rIdx]!;
     for (let d = 0; d < DAYS; d++) {
@@ -144,6 +146,8 @@ async function seed(): Promise<void> {
         const passengerId = userIds[(base + s) % PASSENGERS]!;
         requests.push({
           passengerId,
+          originCityId: place(r.origin),
+          destinationCityId: place(r.destination),
           originCity: r.origin,
           destinationCity: r.destination,
           seatsNeeded: 1 + ((rIdx + d + s) % 3), // 1..3

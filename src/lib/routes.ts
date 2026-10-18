@@ -7,6 +7,8 @@
  * table once we need editable values. Keys are case- and order-independent.
  */
 
+import { haversineKm } from '@/lib/places.js';
+
 interface RouteSpec {
   durationMin: number;
   distanceKm: number;
@@ -20,14 +22,11 @@ const RAW_ROUTES: Array<[string, string, RouteSpec]> = [
   ['Бишкек', 'Нарын', { durationMin: 5 * 60, distanceKm: 320 }],
   ['Бишкек', 'Талас', { durationMin: 5 * 60, distanceKm: 320 }],
   ['Бишкек', 'Чолпон-Ата', { durationMin: 4 * 60, distanceKm: 250 }],
-  ['Бишкек', 'Жалал-Абад', { durationMin: 9 * 60, distanceKm: 500 }],
   ['Бишкек', 'Манас', { durationMin: 9 * 60, distanceKm: 510 }],
   ['Бишкек', 'Баткен', { durationMin: 13 * 60, distanceKm: 700 }],
   ['Бишкек', 'Токмок', { durationMin: 1 * 60, distanceKm: 60 }],
   ['Бишкек', 'Кара-Балта', { durationMin: 1 * 60, distanceKm: 65 }],
-  ['Бишкек', 'Иссык-Куль', { durationMin: 5 * 60, distanceKm: 300 }],
   // Secondary pairs — enough for launch routes + basic coverage.
-  ['Ош', 'Жалал-Абад', { durationMin: 2 * 60, distanceKm: 100 }],
   ['Ош', 'Манас', { durationMin: 2 * 60, distanceKm: 110 }],
   ['Ош', 'Баткен', { durationMin: 4 * 60, distanceKm: 190 }],
   ['Каракол', 'Чолпон-Ата', { durationMin: 2 * 60, distanceKm: 150 }],
@@ -53,16 +52,29 @@ export function lookupRoute(origin: string, destination: string): RouteSpec | nu
   return TABLE.get(`${lo}→${hi}`) ?? null;
 }
 
+// Mountain roads: real road length ≈ 1.4 × straight-line distance, average
+// intercity speed ≈ 60 km/h.
+const ROAD_FACTOR = 1.4;
+const AVG_SPEED_KMH = 60;
+
 /**
- * Compute estimated duration in minutes. Falls back to a crude "1 minute per
- * 1 km at 60 km/h" estimate if the pair is unknown — we still accept the trip
- * (the TZ doesn't require all pairs to be in the directory), but the autoclose
- * cron timing will be less accurate.
+ * Estimated duration in minutes: the reference table for well-known pairs,
+ * otherwise straight-line distance × ROAD_FACTOR at AVG_SPEED_KMH (≥ 30 min).
+ * Without coordinates, `fallback`.
  */
 export function estimateDurationMin(
-  origin: string,
-  destination: string,
+  origin: { nameRu: string; lat: number | null; lng: number | null },
+  destination: { nameRu: string; lat: number | null; lng: number | null },
   fallback = 4 * 60,
 ): number {
-  return lookupRoute(origin, destination)?.durationMin ?? fallback;
+  const known = lookupRoute(origin.nameRu, destination.nameRu);
+  if (known) return known.durationMin;
+  if (origin.lat === null || origin.lng === null || destination.lat === null || destination.lng === null) {
+    return fallback;
+  }
+  const km = haversineKm(
+    { lat: origin.lat, lng: origin.lng },
+    { lat: destination.lat, lng: destination.lng },
+  );
+  return Math.max(30, Math.round(((km * ROAD_FACTOR) / AVG_SPEED_KMH) * 60 / 5) * 5);
 }

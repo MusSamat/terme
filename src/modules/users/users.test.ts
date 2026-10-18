@@ -153,17 +153,3 @@ describe('POST /v1/users/avatar', () => {
     expect(res.status).toBe(400);
   });
 });
-
-describe('GET /v1/cities', () => {
-  it('returns active cities', async () => {
-    await testPrisma.city.createMany({
-      data: [
-        { id: 9001, nameRu: 'Бишкек', nameKg: 'Бишкек', nameEn: 'Bishkek', type: 'city', regionId: 7, regionNameRu: 'Бишкек', regionNameKg: 'Бишкек', isActive: true, prompt: [] },
-        { id: 9002, nameRu: 'Архив', nameKg: 'Архив', nameEn: 'Arkhiv', type: 'village', regionId: 1, regionNameRu: 'Чуйская область', regionNameKg: 'Чүй облусу', isActive: false, prompt: [] },
-      ],
-    });
-    const res = await request(app).get('/v1/cities');
-    expect(res.status).toBe(200);
-    expect(res.body.data.map((c: { nameRu: string }) => c.nameRu)).toEqual(['Бишкек']);
-  });
-});

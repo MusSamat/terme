@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { CITY } from '../../../tests/cities.js';
 import { testPrisma } from '../../../tests/setup.js';
 import { autoCompleteTripsJob } from './autoCompleteTrips.js';
 import { createUser, createVerifiedDriver } from '../../../tests/factories.js';
@@ -16,8 +17,8 @@ describe('auto_complete_trips cron', () => {
     const trip = await testPrisma.trip.create({
       data: {
         driverId: d.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Токмок',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Токмок', destinationCityId: CITY['Токмок'],
         originAddress: 'x',
         departureAt: new Date(Date.now() - 5 * 60 * 60_000),
         estimatedDurationMin: 60,
@@ -62,8 +63,8 @@ describe('auto_complete_trips cron', () => {
     await testPrisma.trip.create({
       data: {
         driverId: d.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() + 60_000),
         estimatedDurationMin: 600,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CITY } from '../../../tests/cities.js';
 import { testPrisma } from '../../../tests/setup.js';
 import { cleanupStaleLikesJob } from './cleanupStaleLikes.js';
 import { createUser, createVerifiedDriver } from '../../../tests/factories.js';
@@ -9,8 +10,8 @@ describe('cleanup_stale_likes cron', () => {
     const trip = await testPrisma.trip.create({
       data: {
         driverId: d.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: opts.departureAt,
         estimatedDurationMin: 600,
@@ -35,10 +36,10 @@ describe('cleanup_stale_likes cron', () => {
     const tripDone = await makeTrip({ departureAt: future, status: 'completed' }); // terminal → delete
 
     const reqKeep = await testPrisma.passengerRequest.create({
-      data: { passengerId: passenger.id, originCity: 'Бишкек', destinationCity: 'Ош', seatsNeeded: 1, departureDate: future, status: 'open' },
+      data: { passengerId: passenger.id, originCity: 'Бишкек', originCityId: CITY['Бишкек'], destinationCity: 'Ош', destinationCityId: CITY['Ош'], seatsNeeded: 1, departureDate: future, status: 'open' },
     });
     const reqExpired = await testPrisma.passengerRequest.create({
-      data: { passengerId: passenger.id, originCity: 'Бишкек', destinationCity: 'Ош', seatsNeeded: 1, departureDate: future, status: 'expired' },
+      data: { passengerId: passenger.id, originCity: 'Бишкек', originCityId: CITY['Бишкек'], destinationCity: 'Ош', destinationCityId: CITY['Ош'], seatsNeeded: 1, departureDate: future, status: 'expired' },
     });
 
     const orphan = '00000000-0000-0000-0000-0000000000aa'; // target row never existed

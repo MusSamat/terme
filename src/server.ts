@@ -14,6 +14,7 @@ import { createAuthRouter } from '@/modules/auth/auth.routes.js';
 import { createHealthRouter } from '@/modules/health/health.routes.js';
 import { createUsersRouter } from '@/modules/users/users.routes.js';
 import { createCitiesRouter } from '@/modules/cities/cities.routes.js';
+import { createMapRouter } from '@/modules/map/map.routes.js';
 import { createDriversRouter } from '@/modules/drivers/drivers.routes.js';
 import { createCarsRouter } from '@/modules/cars/cars.routes.js';
 import { createCarCatalogService } from '@/modules/cars/carCatalog.service.js';
@@ -82,6 +83,7 @@ export function createApp(prisma: PrismaClient, notifier: Notifier = new NoopNot
   v1.use('/auth', createAuthRouter(prisma, notifier));
   v1.use('/users', createUsersRouter(prisma, notifier));
   v1.use('/cities', createCitiesRouter(prisma));
+  v1.use('/map', createMapRouter(prisma));
   v1.use('/drivers', createDriversRouter(prisma));
   const carCatalog = createCarCatalogService(prisma);
   v1.use('/cars', createCarsRouter(prisma, carCatalog));

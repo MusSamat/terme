@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MeetingPoint, PlaceFilterQuery, PlaceId } from '@/modules/cities/cities.schemas.js';
 
 // TZ §10.1 constants:
 //   departure: not less than 30 min from now, not more than 60 days ahead
@@ -7,30 +8,38 @@ import { z } from 'zod';
 //          against driver_profile.seats_count at service level)
 //   horizon rules validated in service because they depend on "now"
 
-const CityName = z.string().trim().min(1).max(50);
+// One preference key set for create, patch and the search filters
+// (no_smoking → smoking=false, pets → animals=true, women_only).
+export const TripPreferences = z
+  .object({
+    clean: z.boolean(),
+    music: z.boolean(),
+    smoking: z.boolean(),
+    ac: z.boolean(),
+    animals: z.boolean(),
+    quiet: z.boolean(),
+    chat: z.boolean(),
+    women_only: z.boolean(),
+  })
+  .partial();
 
-export const Waypoint = z.object({
-  city: CityName,
-  address: z.string().trim().max(200).optional(),
-});
-
-// Extra route points (any region): pickupCities = where the driver can still
-// board passengers (origin side), dropoffCities = where the driver can drop
+// Extra route points (any region): pickupCityIds = where the driver can still
+// board passengers (origin side), dropoffCityIds = where the driver can drop
 // passengers (destination side). Existence is validated at the service level.
-const RouteCities = z.array(CityName).max(5).default([]);
+const RouteStops = z.array(PlaceId).max(5).default([]);
 
 export const TripCreateBody = z
   .object({
-    originCity: CityName,
-    destinationCity: CityName,
+    originCityId: PlaceId,
+    destinationCityId: PlaceId,
+    // Exact boarding / drop-off spot inside the settlement (map pin). Shown on
+    // the map so passengers in a big city can pick the nearest driver.
+    originPoint: MeetingPoint.optional(),
+    destinationPoint: MeetingPoint.optional(),
     // Which of the user's cars rides this trip; omitted → newest car.
     carId: z.string().uuid().optional(),
-    originAddress: z.string().trim().min(1).max(200),
-    originLat: z.number().min(-90).max(90).optional(),
-    originLng: z.number().min(-180).max(180).optional(),
-    pickupCities: RouteCities,
-    dropoffCities: RouteCities,
-    waypoints: z.array(Waypoint).max(3).default([]),
+    pickupCityIds: RouteStops,
+    dropoffCityIds: RouteStops,
     departureAt: z.string().datetime({ offset: true }),
     // Optional «выезд примерно до» — trip departs between departureAt and this.
     departureWindowEnd: z.string().datetime({ offset: true }).optional(),
@@ -42,27 +51,12 @@ export const TripCreateBody = z
     // Full key set the clients actually send (web maps no_smoking→smoking,
     // pets→animals). Unknown keys used to be silently stripped, which left
     // trips without the data the search filters need.
-    preferences: z
-      .object({
-        clean: z.boolean().optional(),
-        music: z.boolean().optional(),
-        smoking: z.boolean().optional(),
-        ac: z.boolean().optional(),
-        animals: z.boolean().optional(),
-        quiet: z.boolean().optional(),
-        chat: z.boolean().optional(),
-        women_only: z.boolean().optional(),
-        // legacy client keys
-        silence: z.boolean().optional(),
-        no_smoking: z.boolean().optional(),
-      })
-      .partial()
-      .default({}),
+    preferences: TripPreferences.default({}),
     comment: z.string().trim().max(300).optional(),
   })
-  .refine((v) => v.originCity !== v.destinationCity, {
+  .refine((v) => v.originCityId !== v.destinationCityId, {
     message: 'origin and destination must differ',
-    path: ['destinationCity'],
+    path: ['destinationCityId'],
   })
   .refine(
     (v) => {
@@ -81,13 +75,12 @@ export const TripIdParam = z.object({ id: z.string().uuid() });
 
 // Per-day trip counts for the route (calendar availability in the date picker).
 export const TripCalendarQuery = z.object({
-  from_city: CityName,
-  to_city: CityName,
+  from_id: PlaceId,
+  to_id: PlaceId,
 });
 
 export const TripSearchQuery = z.object({
-  from_city: CityName.optional(),
-  to_city: CityName.optional(),
+  ...PlaceFilterQuery,
   date: z.string().datetime({ offset: true }).optional(),
   seats: z.coerce.number().int().min(1).max(4).default(1),
   min_price: z.coerce.number().int().min(0).optional(),
@@ -110,10 +103,16 @@ export const TripSearchQuery = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   luggage: z.enum(['yes', 'small', 'no']).optional(),
-  sort: z.enum(['time', 'price_asc', 'rating_desc']).default('time'),
-  // Plain uuid, or 'nb_'-prefixed uuid when paginating the same-raion
-  // nearby tier (see districtCityNames fallback in the service).
-  cursor: z.string().regex(/^(nb_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
+  // airport = transfers to / from an airport; intercity = everything else.
+  kind: z.enum(['intercity', 'airport']).optional(),
+  // nearest = by distance from (near_lat, near_lng) to the boarding point.
+  sort: z.enum(['time', 'price_asc', 'rating_desc', 'nearest']).default('time'),
+  // Plain uuid, 'nb_'-prefixed uuid when paginating the nearby (radius) tier,
+  // or 'o_<offset>' for sort=nearest.
+  cursor: z
+    .string()
+    .regex(/^((nb_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|o_\d{1,4})$/i)
+    .optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });
 
@@ -125,14 +124,10 @@ export const TripPatchBody = z
     priceNegotiable: z.boolean().optional(),
     comment: z.string().trim().max(300).nullable().optional(),
     luggage: z.enum(['yes', 'small', 'no']).optional(),
-    preferences: z
-      .object({
-        silence: z.boolean().optional(),
-        music: z.boolean().optional(),
-        no_smoking: z.boolean().optional(),
-      })
-      .partial()
-      .optional(),
+    // Merged into the stored preferences (keys omitted here are kept).
+    preferences: TripPreferences.optional(),
+    originPoint: MeetingPoint.nullable().optional(),
+    destinationPoint: MeetingPoint.nullable().optional(),
     // Allowing departureAt shift within a small window would be nice UX — but
     // TZ §10 doesn't explicitly permit or forbid it. Keeping this out of MVP
     // so we don't have to re-validate the one-trip-per-day constraint and
@@ -158,8 +153,8 @@ export const MyTripsQuery = z.object({
 export type MyTripsInput = z.infer<typeof MyTripsQuery>;
 
 export const PriceSuggestionQuery = z.object({
-  from: CityName,
-  to: CityName,
+  from_id: PlaceId,
+  to_id: PlaceId,
 });
 
 export const IdempotencyHeader = z.object({

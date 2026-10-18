@@ -15,7 +15,7 @@ import {
   CarModelCreateBody,
   CarModelsQuery,
   CarModelUpdateBody,
-  CityCreateBody,
+  CitiesAdminQuery,
   CityIdParam,
   CityUpdateBody,
   SmallIntIdParam,
@@ -170,22 +170,9 @@ export function createAdminRouter(
   // ─── Cities (superadmin write) ────────────────────────────────────────
   router.get(
     '/cities',
-    asyncHandler(async (_req, res) => {
-      res.json({ data: await cities.list() });
-    }),
-  );
-
-  router.post(
-    '/cities',
-    requireAdminRole('superadmin'),
-    validate({ body: CityCreateBody }),
+    validate({ query: CitiesAdminQuery }),
     asyncHandler(async (req, res) => {
-      const created = await cities.create(
-        req.body as Parameters<typeof cities.create>[0],
-        req.admin!.id,
-        req.ip ?? null,
-      );
-      res.status(201).json(created);
+      res.json(await cities.list(req.query as unknown as Parameters<typeof cities.list>[0]));
     }),
   );
 

@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 export const UpdateMeBody = z.object({
   name: z.string().trim().min(2).max(50).optional(),
+  surname: z.string().trim().max(100).optional(),
+  preferredMode: z.enum(['passenger', 'driver']).optional(),
   language: z.enum(['ru', 'kg']).optional(),
   bio: z.string().trim().max(300).optional(),
   // avatar_url is never set directly — use POST /users/avatar instead.

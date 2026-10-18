@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { CITY } from '../../../tests/cities.js';
 import request from 'supertest';
 import crypto from 'node:crypto';
 import type { Express } from 'express';
@@ -34,8 +35,8 @@ function nextKgNoon(): Date {
 
 function tripPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    originCity: 'Бишкек',
-    destinationCity: 'Ош',
+    originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+    destinationCity: 'Ош', destinationCityId: CITY['Ош'],
     originAddress: 'Вокзал',
     departureAt: validDeparture(),
     seatsTotal: 3,
@@ -126,7 +127,7 @@ describe('POST /v1/trips', () => {
       .post('/v1/trips')
       .set('Authorization', `Bearer ${d2.accessToken}`)
       .set('Idempotency-Key', key)
-      .send(tripPayload({ destinationCity: 'Каракол' }));
+      .send(tripPayload({ destinationCity: 'Каракол', destinationCityId: CITY['Каракол'] }));
     expect(res.status).toBe(409);
   });
 
@@ -179,7 +180,7 @@ describe('POST /v1/trips', () => {
       .post('/v1/trips')
       .set('Authorization', `Bearer ${d.accessToken}`)
       .set('Idempotency-Key', idempotencyKey())
-      .send(tripPayload({ destinationCity: 'Бишкек' }));
+      .send(tripPayload({ destinationCity: 'Бишкек', destinationCityId: CITY['Бишкек'] }));
     expect(res.status).toBe(400);
   });
 
@@ -211,7 +212,7 @@ describe('POST /v1/trips', () => {
       .post('/v1/trips')
       .set('Authorization', `Bearer ${d.accessToken}`)
       .set('Idempotency-Key', idempotencyKey())
-      .send(tripPayload({ destinationCity: 'Каракол', departureAt: dep2.toISOString() }));
+      .send(tripPayload({ destinationCity: 'Каракол', destinationCityId: CITY['Каракол'], departureAt: dep2.toISOString() }));
     expect(otherRoute.status).toBe(201);
 
     // Same route on the next KG day is fine too.
@@ -246,8 +247,8 @@ describe('GET /v1/trips (search)', () => {
       data: [
         {
           driverId: dCheap.id,
-          originCity: 'Бишкек',
-          destinationCity: 'Ош',
+          originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+          destinationCity: 'Ош', destinationCityId: CITY['Ош'],
           originAddress: 'x',
           departureAt: new Date(base),
           estimatedDurationMin: 600,
@@ -259,8 +260,8 @@ describe('GET /v1/trips (search)', () => {
         },
         {
           driverId: dMid.id,
-          originCity: 'Бишкек',
-          destinationCity: 'Ош',
+          originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+          destinationCity: 'Ош', destinationCityId: CITY['Ош'],
           originAddress: 'x',
           departureAt: new Date(base + 60_000),
           estimatedDurationMin: 600,
@@ -272,8 +273,8 @@ describe('GET /v1/trips (search)', () => {
         },
         {
           driverId: dExp.id,
-          originCity: 'Бишкек',
-          destinationCity: 'Ош',
+          originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+          destinationCity: 'Ош', destinationCityId: CITY['Ош'],
           originAddress: 'x',
           departureAt: new Date(base + 120_000),
           estimatedDurationMin: 600,
@@ -329,8 +330,8 @@ describe('GET /v1/trips (search)', () => {
     await testPrisma.trip.create({
       data: {
         driverId: d.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() - 60 * 60_000),
         estimatedDurationMin: 600,
@@ -393,8 +394,8 @@ describe('GET /v1/trips (search)', () => {
     await testPrisma.trip.create({
       data: {
         driverId: unverified.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() + 2 * 60 * 60_000),
         estimatedDurationMin: 600,
@@ -417,16 +418,19 @@ describe('GET /v1/trips (search)', () => {
   });
 });
 
-describe('Trip pickup/dropoff cities (посадка/высадка по пути)', () => {
-  // Бишкек→Баткен with a pickup point (board en route) and a dropoff point.
-  function batkenTrip(driverId: string, pickupCities: string[], dropoffCities: string[]) {
+describe('Trip pickup/dropoff stops (посадка/высадка по пути)', () => {
+  // Бишкек→Баткен with a pickup stop (board en route) and a dropoff stop.
+  function batkenTrip(driverId: string) {
     return {
       driverId,
-      originCity: 'Бишкек',
-      destinationCity: 'Баткен',
-      pickupCities,
-      dropoffCities,
-      originAddress: 'x',
+      originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+      destinationCity: 'Баткен', destinationCityId: CITY['Баткен'],
+      stops: {
+        create: [
+          { cityId: CITY['Нарын'], kind: 'pickup', position: 1 },
+          { cityId: CITY['Ош'], kind: 'dropoff', position: 1 },
+        ],
+      },
       departureAt: new Date(Date.now() + 3 * 60 * 60_000),
       estimatedDurationMin: 780,
       seatsTotal: 3,
@@ -437,84 +441,129 @@ describe('Trip pickup/dropoff cities (посадка/высадка по пут�
     };
   }
 
-  it('creates a trip with pickup/dropoff cities from any region', async () => {
+  const toBatken = (extra: Record<string, unknown>) =>
+    tripPayload({ destinationCityId: CITY['Баткен'], ...extra });
+
+  it('creates a trip with pickup/dropoff stops from any region', async () => {
     const d = await createVerifiedDriver(testPrisma, { plate: 'SC1' });
     const res = await request(app)
       .post('/v1/trips')
       .set('Authorization', `Bearer ${d.accessToken}`)
       .set('Idempotency-Key', idempotencyKey())
-      .send(
-        tripPayload({ destinationCity: 'Баткен', pickupCities: ['Нарын'], dropoffCities: ['Ош'] }),
-      );
+      .send(toBatken({ pickupCityIds: [CITY['Нарын']], dropoffCityIds: [CITY['Ош']] }));
     expect(res.status).toBe(201);
     expect(res.body.pickupCities).toEqual(['Нарын']);
     expect(res.body.dropoffCities).toEqual(['Ош']);
+    expect(res.body.stops).toEqual([
+      { kind: 'pickup', place: expect.objectContaining({ id: CITY['Нарын'], nameRu: 'Нарын' }) },
+      { kind: 'dropoff', place: expect.objectContaining({ id: CITY['Ош'] }) },
+    ]);
   });
 
-  it('rejects an unknown route city', async () => {
+  it('rejects an unknown stop (400 unknown_city)', async () => {
     const d = await createVerifiedDriver(testPrisma, { plate: 'SC2' });
     const res = await request(app)
       .post('/v1/trips')
       .set('Authorization', `Bearer ${d.accessToken}`)
       .set('Idempotency-Key', idempotencyKey())
-      .send(tripPayload({ destinationCity: 'Баткен', dropoffCities: ['Неизвестный'] }));
+      .send(toBatken({ dropoffCityIds: [999999] }));
     expect(res.status).toBe(400);
-    expect(res.body.error.details.reason).toBe('unknown_route_city');
+    expect(res.body.error.details.reason).toBe('unknown_city');
   });
 
-  it('drops route cities equal to origin or destination', async () => {
+  it('drops stops equal to origin or destination', async () => {
     const d = await createVerifiedDriver(testPrisma, { plate: 'SC3' });
     const res = await request(app)
       .post('/v1/trips')
       .set('Authorization', `Bearer ${d.accessToken}`)
       .set('Idempotency-Key', idempotencyKey())
-      .send(tripPayload({ destinationCity: 'Баткен', pickupCities: ['Бишкек', 'Нарын', 'Баткен'] }));
+      .send(toBatken({ pickupCityIds: [CITY['Бишкек'], CITY['Нарын'], CITY['Баткен']] }));
     expect(res.status).toBe(201);
     expect(res.body.pickupCities).toEqual(['Нарын']);
   });
 
-  it('matches a pickup city as the search origin', async () => {
+  it('matches a pickup stop as the search origin', async () => {
     const d = await createVerifiedDriver(testPrisma, { plate: 'SC4' });
-    await testPrisma.trip.create({ data: batkenTrip(d.id, ['Нарын'], ['Ош']) });
-    const caller = await createUser(testPrisma);
-    const res = await request(app)
-      .get('/v1/trips?from_city=Нарын&to_city=Баткен')
-      .set('Authorization', `Bearer ${caller.accessToken}`);
+    await testPrisma.trip.create({ data: batkenTrip(d.id) });
+    const res = await request(app).get(`/v1/trips?from_id=${CITY['Нарын']}&to_id=${CITY['Баткен']}`);
     expect(res.body.data).toHaveLength(1);
   });
 
-  it('matches a dropoff city as the search destination', async () => {
+  it('matches a dropoff stop as the search destination', async () => {
     const d = await createVerifiedDriver(testPrisma, { plate: 'SC5' });
-    await testPrisma.trip.create({ data: batkenTrip(d.id, ['Нарын'], ['Ош']) });
-    const caller = await createUser(testPrisma);
-    const res = await request(app)
-      .get('/v1/trips?from_city=Бишкек&to_city=Ош')
-      .set('Authorization', `Bearer ${caller.accessToken}`);
-    // The lean search DTO drops dropoffCities (full arrays live on the detail
-    // DTO); assert the match landed on the Batken trip via its Ош dropoff.
+    await testPrisma.trip.create({ data: batkenTrip(d.id) });
+    const res = await request(app).get(`/v1/trips?from_id=${CITY['Бишкек']}&to_id=${CITY['Ош']}`);
     expect(res.body.data).toHaveLength(1);
     expect(res.body.data[0].destinationCity).toBe('Баткен');
   });
 
-  it('does NOT match a dropoff city used as the search origin (mirror)', async () => {
+  it('does NOT match a dropoff stop used as the search origin (mirror)', async () => {
     const d = await createVerifiedDriver(testPrisma, { plate: 'SC6' });
-    await testPrisma.trip.create({ data: batkenTrip(d.id, ['Нарын'], ['Ош']) });
-    const caller = await createUser(testPrisma);
-    // Ош is only a dropoff point — a passenger cannot board there.
-    const res = await request(app)
-      .get('/v1/trips?from_city=Ош&to_city=Баткен')
-      .set('Authorization', `Bearer ${caller.accessToken}`);
+    await testPrisma.trip.create({ data: batkenTrip(d.id) });
+    // Ош is only a dropoff stop — a passenger cannot board there.
+    const res = await request(app).get(`/v1/trips?from_id=${CITY['Ош']}&to_id=${CITY['Баткен']}`);
     expect(res.body.data).toHaveLength(0);
   });
 
   it('search by the exact route still returns the trip', async () => {
     const d = await createVerifiedDriver(testPrisma, { plate: 'SC7' });
-    await testPrisma.trip.create({ data: batkenTrip(d.id, ['Нарын'], ['Ош']) });
-    const caller = await createUser(testPrisma);
-    const res = await request(app)
-      .get('/v1/trips?from_city=Бишкек&to_city=Баткен')
-      .set('Authorization', `Bearer ${caller.accessToken}`);
+    await testPrisma.trip.create({ data: batkenTrip(d.id) });
+    const res = await request(app).get(`/v1/trips?from_id=${CITY['Бишкек']}&to_id=${CITY['Баткен']}`);
     expect(res.body.data).toHaveLength(1);
+  });
+});
+
+describe('Meeting points and sort=nearest', () => {
+  it('stores the boarding pin and rejects a pin far from the settlement', async () => {
+    const d = await createVerifiedDriver(testPrisma, { plate: 'MP1' });
+    const ok = await request(app)
+      .post('/v1/trips')
+      .set('Authorization', `Bearer ${d.accessToken}`)
+      .set('Idempotency-Key', idempotencyKey())
+      .send(tripPayload({ originPoint: { lat: 42.8746, lng: 74.6122, address: 'ЦУМ' } }));
+    expect(ok.status).toBe(201);
+    expect(ok.body.originPoint).toMatchObject({ lat: 42.8746, lng: 74.6122, address: 'ЦУМ' });
+
+    // A pin in a жилмассив gets its area label automatically.
+    const inArea = await request(app)
+      .post('/v1/trips')
+      .set('Authorization', `Bearer ${d.accessToken}`)
+      .set('Idempotency-Key', idempotencyKey())
+      .send(tripPayload({ destinationCityId: CITY['Нарын'], originPoint: { lat: 42.8188, lng: 74.6252 } }));
+    expect(inArea.status).toBe(201);
+    expect(inArea.body.originPoint.area).toEqual({ nameRu: 'Асанбай', nameKg: 'Асанбай' });
+
+    const far = await request(app)
+      .post('/v1/trips')
+      .set('Authorization', `Bearer ${d.accessToken}`)
+      .set('Idempotency-Key', idempotencyKey())
+      .send(tripPayload({ originPoint: { lat: 40.53, lng: 72.8 } })); // Osh, not Bishkek
+    expect(far.status).toBe(400);
+    expect(far.body.error.details.reason).toBe('point_far_from_city');
+  });
+
+  it('sort=nearest ranks trips by distance from the viewer to the boarding pin', async () => {
+    const near = await createVerifiedDriver(testPrisma, { plate: 'MP2' });
+    const far = await createVerifiedDriver(testPrisma, { plate: 'MP3' });
+    const base = {
+      originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+      destinationCity: 'Ош', destinationCityId: CITY['Ош'],
+      departureAt: new Date(Date.now() + 3 * 60 * 60_000),
+      estimatedDurationMin: 600, seatsTotal: 3, seatsAvailable: 3, pricePerSeat: 900, status: 'active',
+    };
+    await testPrisma.trip.create({ data: { ...base, driverId: far.id, originLat: 42.84, originLng: 74.5 } });
+    await testPrisma.trip.create({ data: { ...base, driverId: near.id, originLat: 42.876, originLng: 74.61 } });
+    const res = await request(app).get(
+      `/v1/trips?from_id=${CITY['Бишкек']}&sort=nearest&near_lat=42.875&near_lng=74.612`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((t: { driverId: string }) => t.driverId)).toEqual([near.id, far.id]);
+    expect(res.body.data[0].distanceKm).toBeLessThan(1);
+  });
+
+  it('sort=nearest without a viewer point is a 400', async () => {
+    const res = await request(app).get('/v1/trips?sort=nearest');
+    expect(res.status).toBe(400);
   });
 });
 
@@ -524,8 +573,8 @@ describe('GET /v1/trips/:id', () => {
     const trip = await testPrisma.trip.create({
       data: {
         driverId: d.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() + 2 * 60 * 60_000),
         estimatedDurationMin: 600,
@@ -563,8 +612,8 @@ describe('PATCH /v1/trips/:id', () => {
     const trip = await testPrisma.trip.create({
       data: {
         driverId: d.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() + 2 * 60 * 60_000),
         estimatedDurationMin: 600,
@@ -622,8 +671,8 @@ describe('DELETE /v1/trips/:id (cancel)', () => {
     const trip = await testPrisma.trip.create({
       data: {
         driverId: d.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() + 2 * 60 * 60_000),
         estimatedDurationMin: 600,
@@ -661,8 +710,8 @@ describe('DELETE /v1/trips/:id (cancel)', () => {
     const trip = await testPrisma.trip.create({
       data: {
         driverId: d.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         departureAt: new Date(Date.now() + 2 * 60 * 60_000),
         estimatedDurationMin: 600,
@@ -688,8 +737,8 @@ describe('GET /v1/trips/my (driver tabs)', () => {
       data: [
         {
           driverId: d.id,
-          originCity: 'Бишкек',
-          destinationCity: 'Ош',
+          originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+          destinationCity: 'Ош', destinationCityId: CITY['Ош'],
           originAddress: 'x',
           departureAt: new Date(base + 2 * 60 * 60_000),
           estimatedDurationMin: 600,
@@ -701,8 +750,8 @@ describe('GET /v1/trips/my (driver tabs)', () => {
         },
         {
           driverId: d.id,
-          originCity: 'Бишкек',
-          destinationCity: 'Каракол',
+          originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+          destinationCity: 'Каракол', destinationCityId: CITY['Каракол'],
           originAddress: 'x',
           departureAt: new Date(base - 7 * 24 * 60 * 60_000),
           estimatedDurationMin: 360,
@@ -714,8 +763,8 @@ describe('GET /v1/trips/my (driver tabs)', () => {
         },
         {
           driverId: d.id,
-          originCity: 'Бишкек',
-          destinationCity: 'Нарын',
+          originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+          destinationCity: 'Нарын', destinationCityId: CITY['Нарын'],
           originAddress: 'x',
           departureAt: new Date(base - 3 * 24 * 60 * 60_000),
           estimatedDurationMin: 300,
@@ -750,7 +799,7 @@ describe('GET /v1/routes/price-suggestion', () => {
   it('returns null when fewer than 3 data points', async () => {
     const caller = await createUser(testPrisma);
     const res = await request(app)
-      .get('/v1/routes/price-suggestion?from=Бишкек&to=Ош')
+      .get(`/v1/routes/price-suggestion?from_id=${CITY['Бишкек']}&to_id=${CITY['Ош']}`)
       .set('Authorization', `Bearer ${caller.accessToken}`);
     expect(res.status).toBe(200);
     expect(res.body.averagePrice).toBeNull();
@@ -762,8 +811,8 @@ describe('GET /v1/routes/price-suggestion', () => {
     await testPrisma.trip.createMany({
       data: [600, 800, 1000].map((price, i) => ({
         driverId: d.id,
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         originAddress: 'x',
         // Different days so no one-active-per-day conflict.
         departureAt: new Date(Date.now() + (i + 1) * 24 * 60 * 60_000),
@@ -777,99 +826,59 @@ describe('GET /v1/routes/price-suggestion', () => {
     });
     const caller = await createUser(testPrisma);
     const res = await request(app)
-      .get('/v1/routes/price-suggestion?from=Бишкек&to=Ош')
+      .get(`/v1/routes/price-suggestion?from_id=${CITY['Бишкек']}&to_id=${CITY['Ош']}`)
       .set('Authorization', `Bearer ${caller.accessToken}`);
     expect(res.body.averagePrice).toBe(800);
     expect(res.body.sampleSize).toBe(3);
   });
 });
 
-describe('GET /v1/trips nearby fallback (sub-cities of the same raion)', () => {
-  // Two villages of one raion: exact search for one must fall back to the other.
-  async function seedRaionVillages() {
-    await testPrisma.city.createMany({
-      data: [
-        {
-          // Explicit high ids: seedLaunchCities uses fixed low ids without
-          // advancing the autoincrement sequence, so default ids collide.
-          id: 909001,
-          nameRu: 'Тест-Село-А',
-          nameKg: 'Тест-Село-А',
-          type: 'village',
-          districtNameRu: 'Тестовый район',
-          districtNameKg: 'Тест району',
-          regionNameRu: 'Тестовая область',
-          prompt: [],
-          isActive: true,
-        },
-        {
-          id: 909002,
-          nameRu: 'Тест-Село-Б',
-          nameKg: 'Тест-Село-Б',
-          type: 'village',
-          districtNameRu: 'Тестовый район',
-          districtNameKg: 'Тест району',
-          regionNameRu: 'Тестовая область',
-          prompt: [],
-          isActive: true,
-        },
-      ],
+describe('GET /v1/trips nearby fallback (settlements within the radius)', () => {
+  // Кант is ~20 km from Бишкек: an exact search from Кант with no trips falls
+  // back to the Бишкек trip and flags the page as nearby.
+  async function tripFrom(origin: 'Бишкек' | 'Кант', plate: string) {
+    const d = await createVerifiedDriver(testPrisma, { plate });
+    await testPrisma.trip.create({
+      data: {
+        driverId: d.id,
+        originCity: origin, originCityId: CITY[origin],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
+        departureAt: new Date(Date.now() + 3 * 60 * 60_000),
+        estimatedDurationMin: 600,
+        seatsTotal: 3,
+        seatsAvailable: 3,
+        pricePerSeat: 900,
+        luggage: 'no',
+        status: 'active',
+      },
     });
   }
 
-  it('falls back to same-raion trips when the exact city has none, flags nearby', async () => {
-    await seedRaionVillages();
-    const d = await createVerifiedDriver(testPrisma, { plate: 'NB1' });
-    await testPrisma.trip.create({
-      data: {
-        driverId: d.id,
-        originCity: 'Тест-Село-А',
-        destinationCity: 'Ош',
-        originAddress: 'x',
-        departureAt: new Date(Date.now() + 3 * 60 * 60_000),
-        estimatedDurationMin: 600,
-        seatsTotal: 3,
-        seatsAvailable: 3,
-        pricePerSeat: 900,
-        luggage: 'no',
-        status: 'active',
-      },
-    });
-    const caller = await createUser(testPrisma);
-    const res = await request(app)
-      .get(`/v1/trips?from_city=${encodeURIComponent('Тест-Село-Б')}&to_city=${encodeURIComponent('Ош')}`)
-      .set('Authorization', `Bearer ${caller.accessToken}`);
+  it('falls back to nearby trips when the exact place has none, flags nearby', async () => {
+    await tripFrom('Бишкек', 'NB1');
+    const res = await request(app).get(`/v1/trips?from_id=${CITY['Кант']}&to_id=${CITY['Ош']}`);
     expect(res.status).toBe(200);
     expect(res.body.nearby).toBe(true);
     expect(res.body.data).toHaveLength(1);
-    expect(res.body.data[0].originCity).toBe('Тест-Село-А');
+    expect(res.body.data[0].originCity).toBe('Бишкек');
   });
 
-  it('does not flag nearby when the exact city matches', async () => {
-    await seedRaionVillages();
-    const d = await createVerifiedDriver(testPrisma, { plate: 'NB2' });
-    await testPrisma.trip.create({
-      data: {
-        driverId: d.id,
-        originCity: 'Тест-Село-Б',
-        destinationCity: 'Ош',
-        originAddress: 'x',
-        departureAt: new Date(Date.now() + 3 * 60 * 60_000),
-        estimatedDurationMin: 600,
-        seatsTotal: 3,
-        seatsAvailable: 3,
-        pricePerSeat: 900,
-        luggage: 'no',
-        status: 'active',
-      },
-    });
-    const caller = await createUser(testPrisma);
-    const res = await request(app)
-      .get(`/v1/trips?from_city=${encodeURIComponent('Тест-Село-Б')}&to_city=${encodeURIComponent('Ош')}`)
-      .set('Authorization', `Bearer ${caller.accessToken}`);
+  it('does not flag nearby when the exact place matches', async () => {
+    await tripFrom('Кант', 'NB2');
+    const res = await request(app).get(`/v1/trips?from_id=${CITY['Кант']}&to_id=${CITY['Ош']}`);
     expect(res.status).toBe(200);
     expect(res.body.nearby).toBeUndefined();
     expect(res.body.data).toHaveLength(1);
+  });
+
+  it('resolves names for SEO pages and the bot (from_city / to_city)', async () => {
+    await tripFrom('Кант', 'NB3');
+    const res = await request(app).get(
+      `/v1/trips?from_city=${encodeURIComponent('Кант')}&to_city=${encodeURIComponent('Ош')}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].origin).toMatchObject({ id: CITY['Кант'], nameRu: 'Кант' });
   });
 });
 

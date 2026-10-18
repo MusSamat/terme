@@ -3,7 +3,17 @@ import { AppError, Errors } from '@/lib/errors.js';
 import { assertActiveUser } from '@/lib/assertUser.js';
 import { toFileUrl } from '@/lib/uploads.js';
 import { cursorArgs, sliceAndNext } from '@/lib/pagination.js';
-import { districtCityNames } from '@/lib/cityArea.js';
+import {
+  haversineKm,
+  loadPlaces,
+  nearbyPlaceIds,
+  nearestAreaId,
+  placeSelect,
+  resolvePlaceByName,
+  toPlaceRef,
+  type PlaceRef,
+  type PlaceRow,
+} from '@/lib/places.js';
 import { redactContactInfo } from '@/lib/contentFilter.js';
 import { estimateDurationMin } from '@/lib/routes.js';
 import { bishkekDayRange } from '@/lib/dates.js';
@@ -22,6 +32,22 @@ import type {
 const HORIZON_MAX_DAYS = 60;
 const HORIZON_MIN_MINUTES = 30;
 const RATING_VISIBLE_AFTER = 3;
+// A meeting-point pin must lie within this distance of its settlement.
+const POINT_MAX_KM = 30;
+// sort=nearest ranks at most this many matching trips by distance.
+const NEAREST_POOL = 200;
+// Simultaneous future trips per driver: intercity rides vs airport transfers
+// (transfers are short and run several times a day).
+const MAX_ACTIVE = { intercity: 3, airport: 10 } as const;
+type TripKind = keyof typeof MAX_ACTIVE;
+
+export interface MeetingPointDto {
+  lat: number;
+  lng: number;
+  address: string | null;
+  // Жилмассив / микрорайон of the pin in Бишкек / Ош («Асанбай»).
+  area: { nameRu: string; nameKg: string } | null;
+}
 
 // ─── Public shapes ────────────────────────────────────────────────────
 export interface TripListItem {
@@ -36,11 +62,19 @@ export interface TripListItem {
     verified: boolean;
     car: { make: string; model: string; color: string; plate: string; photoUrl: string | null } | null;
   };
+  kind: 'intercity' | 'airport';
+  originCityId: number;
+  destinationCityId: number;
   originCity: string;
   destinationCity: string;
+  origin: PlaceRef;
+  destination: PlaceRef;
+  // Exact boarding / drop-off spot (map pin); null → the settlement itself.
+  originPoint: MeetingPointDto | null;
+  destinationPoint: MeetingPointDto | null;
   pickupCities: string[];
   dropoffCities: string[];
-  originAddress: string;
+  stops: Array<{ kind: 'pickup' | 'dropoff'; place: PlaceRef }>;
   departureAt: Date;
   departureWindowEnd: Date | null;
   departureFlexible: boolean;
@@ -74,8 +108,14 @@ export interface TripCardItem {
     verified: boolean;
     car: { make: string; model: string } | null;
   };
+  kind: 'intercity' | 'airport';
+  originCityId: number;
+  destinationCityId: number;
   originCity: string;
   destinationCity: string;
+  origin: PlaceRef;
+  destination: PlaceRef;
+  originPoint: MeetingPointDto | null;
   pickupCities: string[];
   departureAt: Date;
   departureWindowEnd: Date | null;
@@ -83,6 +123,8 @@ export interface TripCardItem {
   pricePerSeat: number;
   status: string;
   liked: boolean;
+  // Only with sort=nearest: km from the viewer to the boarding point.
+  distanceKm?: number;
 }
 
 export interface TripDetail extends TripListItem {
@@ -90,7 +132,6 @@ export interface TripDetail extends TripListItem {
   // The viewer's own active booking on this trip (guards double-booking in UI).
   myBooking: { id: string; status: string } | null;
   preferences: Record<string, boolean>;
-  waypoints: Array<{ city: string; address?: string }>;
   recentRatings: Array<{
     id: string;
     score: number;
@@ -124,11 +165,11 @@ export interface TripsService {
   like(id: string, userId: string): Promise<{ liked: boolean }>;
   unlike(id: string, userId: string): Promise<{ liked: boolean }>;
   recordView(id: string, viewer: { userId: string | null; anonId: string | null }): Promise<void>;
-  priceSuggestion(from: string, to: string): Promise<{
+  priceSuggestion(fromId: number, toId: number): Promise<{
     averagePrice: number | null;
     sampleSize: number;
   }>;
-  calendar(query: { from_city: string; to_city: string }): Promise<{
+  calendar(query: { from_id: number; to_id: number }): Promise<{
     data: { date: string; count: number }[];
   }>;
 }
@@ -139,28 +180,16 @@ export function createTripsService(
 ): TripsService {
   const engagement = createEngagementService(prisma);
 
-  // Validate driver-provided route cities (pickup/dropoff points): each must
-  // exist in the City directory and not be the trip's own origin/destination.
-  // Any region is allowed. Returns the deduped list.
-  async function normalizeRouteCities(
-    exclude: string[],
-    cities: string[],
-  ): Promise<string[]> {
-    const excluded = new Set(exclude);
-    const unique = [...new Set(cities)].filter((c) => !excluded.has(c));
-    if (unique.length === 0) return [];
-
-    const rows = await prisma.city.findMany({
-      where: { nameRu: { in: unique }, isActive: true },
-      select: { nameRu: true },
-    });
-    const known = new Set(rows.map((r) => r.nameRu));
-    for (const city of unique) {
-      if (!known.has(city)) {
-        throw Errors.validation({ reason: 'unknown_route_city', city });
-      }
+  // A pin must sit near its settlement: catches swapped / stale coordinates.
+  function assertPointNear(
+    point: { lat: number; lng: number } | undefined | null,
+    place: PlaceRow,
+    field: string,
+  ): void {
+    if (!point || place.lat === null || place.lng === null) return;
+    if (haversineKm(point, { lat: place.lat, lng: place.lng }) > POINT_MAX_KM) {
+      throw Errors.validation({ reason: 'point_far_from_city', field, max_km: POINT_MAX_KM });
     }
-    return unique;
   }
 
   // ─── Create ─────────────────────────────────────────────────────────
@@ -212,24 +241,51 @@ export function createTripsService(
       });
     }
 
-    // Business rule: max 3 active trips simultaneously.
+    // Stops are deduped and never repeat the trip's own endpoints.
+    const endpoints = new Set([body.originCityId, body.destinationCityId]);
+    const pickupIds = [...new Set(body.pickupCityIds)].filter((id) => !endpoints.has(id));
+    const dropoffIds = [...new Set(body.dropoffCityIds)].filter((id) => !endpoints.has(id));
+    const places = await loadPlaces(prisma, [
+      body.originCityId,
+      body.destinationCityId,
+      ...pickupIds,
+      ...dropoffIds,
+    ]);
+    const origin = places.get(body.originCityId)!;
+    const destination = places.get(body.destinationCityId)!;
+    assertPointNear(body.originPoint, origin, 'originPoint');
+    assertPointNear(body.destinationPoint, destination, 'destinationPoint');
+    const estimatedDurationMin = estimateDurationMin(origin, destination);
+    const kind: TripKind =
+      origin.type === 'airport' || destination.type === 'airport' ? 'airport' : 'intercity';
+
+    // Business rule: a capped number of simultaneous future trips per kind.
     const activeCount = await prisma.trip.count({
-      where: { driverId: driverUserId, status: 'active', departureAt: { gt: new Date() } },
+      where: { driverId: driverUserId, status: 'active', kind, departureAt: { gt: new Date() } },
     });
-    if (activeCount >= 3) {
-      throw Errors.conflict('Driver already has 3 active trips', {
+    if (activeCount >= MAX_ACTIVE[kind]) {
+      throw Errors.conflict(`Driver already has ${MAX_ACTIVE[kind]} active trips`, {
         reason: 'max_active_trips_exceeded',
+        limit: MAX_ACTIVE[kind],
       });
     }
 
-    // Business rule: cannot create a new trip while an existing active trip
-    // has at least one accepted (unfinished) booking.
-    const unfinishedAccepted = await prisma.booking.count({
-      where: {
-        trip: { driverId: driverUserId, status: 'active', departureAt: { gt: new Date() } },
-        status: 'accepted',
-      },
-    });
+    // Business rule (intercity): no new trip while an active one has an accepted,
+    // unfinished booking. Airport transfers are back-to-back by nature.
+    const unfinishedAccepted =
+      kind === 'intercity'
+        ? await prisma.booking.count({
+            where: {
+              trip: {
+                driverId: driverUserId,
+                status: 'active',
+                kind: 'intercity',
+                departureAt: { gt: new Date() },
+              },
+              status: 'accepted',
+            },
+          })
+        : 0;
     if (unfinishedAccepted > 0) {
       throw Errors.conflict('Driver has an unfinished accepted booking on an active trip', {
         reason: 'unfinished_accepted_booking',
@@ -249,15 +305,15 @@ export function createTripsService(
       throw Errors.validation({ reason: 'departure_too_far', max_days: HORIZON_MAX_DAYS });
     }
 
-    // Business rule: one active trip per route per day. Kills the spam pattern
-    // «3 одинаковых Бишкек→Ош» while leaving return trips and other dates free.
+    // Business rule (intercity): one active trip per route per day. Kills the
+    // spam pattern «3 одинаковых Бишкек→Ош»; airport transfers are exempt.
     const { start: dayStart, end: dayEnd } = bishkekDayRange(departureAt);
-    const duplicate = await prisma.trip.count({
+    const duplicate = kind === 'airport' ? 0 : await prisma.trip.count({
       where: {
         driverId: driverUserId,
         status: 'active',
-        originCity: body.originCity,
-        destinationCity: body.destinationCity,
+        originCityId: body.originCityId,
+        destinationCityId: body.destinationCityId,
         departureAt: { gte: dayStart, lt: dayEnd },
       },
     });
@@ -267,27 +323,29 @@ export function createTripsService(
       });
     }
 
-    const estimatedDurationMin = estimateDurationMin(body.originCity, body.destinationCity);
-
-    const exclude = [body.originCity, body.destinationCity];
-    const [pickupCities, dropoffCities] = await Promise.all([
-      normalizeRouteCities(exclude, body.pickupCities),
-      normalizeRouteCities(exclude, body.dropoffCities),
-    ]);
 
     try {
       const created = await prisma.trip.create({
         data: {
           driverId: driverUserId,
           carId: car.id,
-          originCity: body.originCity,
-          destinationCity: body.destinationCity,
-          originAddress: body.originAddress,
-          originLat: body.originLat ?? null,
-          originLng: body.originLng ?? null,
-          pickupCities,
-          dropoffCities,
-          waypoints: body.waypoints as Prisma.InputJsonValue,
+          kind,
+          originCityId: origin.id,
+          destinationCityId: destination.id,
+          originCity: origin.nameRu,
+          destinationCity: destination.nameRu,
+          ...pointColumns('origin', body.originPoint, await nearestAreaId(prisma, origin.id, body.originPoint)),
+          ...pointColumns(
+            'destination',
+            body.destinationPoint,
+            await nearestAreaId(prisma, destination.id, body.destinationPoint),
+          ),
+          stops: {
+            create: [
+              ...pickupIds.map((cityId, i) => ({ cityId, kind: 'pickup', position: i + 1 })),
+              ...dropoffIds.map((cityId, i) => ({ cityId, kind: 'dropoff', position: i + 1 })),
+            ],
+          },
           departureAt,
           departureWindowEnd: body.departureWindowEnd ? new Date(body.departureWindowEnd) : null,
           departureFlexible: body.departureFlexible,
@@ -310,30 +368,26 @@ export function createTripsService(
   }
 
   // ─── Search ─────────────────────────────────────────────────────────
+  // Index-backed Postgres search (idx_trips_active_search / _destination,
+  // trip_stops_city_id_kind_idx): at this data size it answers in a few ms
+  // with no separate search cluster to keep in sync.
   async function search(
     query: TripSearchInput,
     viewerId: string | null = null,
   ): Promise<{ data: TripCardItem[]; nextCursor: string | null; nearby?: boolean }> {
-    if (query.from_city && query.to_city && query.from_city === query.to_city) {
+    const [fromId, toId] = await Promise.all([
+      resolveFilterPlace(query.from_id, query.from_city),
+      resolveFilterPlace(query.to_id, query.to_city),
+    ]);
+    if (fromId !== null && fromId === toId) {
       throw Errors.validation({ reason: 'cities_must_differ' });
     }
-    // "nb_" cursor prefix = the first page fell back to the same-raion tier;
-    // later pages must keep that expanded filter (frontend treats the cursor
-    // as opaque, so no client changes are needed for pagination).
+    // "nb_" cursor prefix = the first page fell back to the nearby (radius)
+    // tier; later pages keep that expanded filter (the cursor is opaque).
     let nearby = false;
     if (query.cursor?.startsWith('nb_')) {
       nearby = true;
       query = { ...query, cursor: query.cursor.slice(3) };
-    }
-    if (query.from_city || query.to_city) {
-      const cityNames = [query.from_city, query.to_city].filter(Boolean) as string[];
-      const cityRows = await prisma.city.findMany({
-        where: { nameRu: { in: cityNames }, isActive: true },
-        select: { nameRu: true },
-      });
-      if (cityRows.length < cityNames.length) {
-        throw Errors.validation({ reason: 'unknown_city' });
-      }
     }
 
     const where: Prisma.TripWhereInput = {
@@ -343,59 +397,50 @@ export function createTripsService(
       // Blocked or soft-deleted drivers' trips must never surface in search.
       driver: { isBlocked: false, deletedAt: null },
     };
-    // Preference filters live in the trips.preferences Json column
-    // (create() stores {clean, music, smoking, ac, animals, quiet, chat, women_only}).
-    // Computed up-front so applyCityFilters can preserve them: the nearby fallback
-    // re-invokes applyCityFilters to widen the city tier, and it must NOT drop
-    // women_only / no_smoking / pets (a safety bug — women_only silently lost).
+    // Preference filters live in trips.preferences (TripPreferences keys). Kept
+    // apart so widening the city tier never drops them (women_only is safety).
     const prefFilters: Prisma.TripWhereInput[] = [];
     if (query.no_smoking) prefFilters.push({ preferences: { path: ['smoking'], equals: false } });
     if (query.pets) prefFilters.push({ preferences: { path: ['animals'], equals: true } });
     if (query.women_only) prefFilters.push({ preferences: { path: ['women_only'], equals: true } });
 
-    // Mirror match: from_city = a boarding point (origin or a pickup city);
-    // to_city = an alighting point (destination or a dropoff city). A dropoff
-    // city does NOT make the trip boardable there, and vice versa.
-    // Both filters use array sets: [city] for the exact tier, or the whole
-    // raion's settlements for the nearby tier (IN uses idx_trips_search,
-    // hasSome uses the GIN indexes on pickup/dropoff arrays).
-    // Rebuilds where.AND as [pref filters] + [city filters] so the city tier can
-    // be re-widened (nearby fallback) without ever losing the preference filters.
-    const applyCityFilters = (fromNames: string[], toNames: string[]): void => {
+    // Mirror match: "from" = a boarding point (origin or a pickup stop), "to" =
+    // an alighting point (destination or a dropoff stop).
+    const applyCityFilters = (fromIds: number[], toIds: number[]): void => {
       const cityFilters: Prisma.TripWhereInput[] = [];
-      if (fromNames.length > 0) {
+      if (fromIds.length > 0) {
         cityFilters.push({
-          OR: [{ originCity: { in: fromNames } }, { pickupCities: { hasSome: fromNames } }],
+          OR: [
+            { originCityId: { in: fromIds } },
+            { stops: { some: { kind: 'pickup', cityId: { in: fromIds } } } },
+          ],
         });
       }
-      if (toNames.length > 0) {
+      if (toIds.length > 0) {
         cityFilters.push({
-          OR: [{ destinationCity: { in: toNames } }, { dropoffCities: { hasSome: toNames } }],
+          OR: [
+            { destinationCityId: { in: toIds } },
+            { stops: { some: { kind: 'dropoff', cityId: { in: toIds } } } },
+          ],
         });
       }
       const and = [...prefFilters, ...cityFilters];
       where.AND = and.length > 0 ? and : undefined;
     };
-    const expandCities = async (): Promise<[string[], string[]]> =>
+    const expandPlaces = async (): Promise<[number[], number[]]> =>
       Promise.all([
-        query.from_city ? districtCityNames(prisma, query.from_city) : Promise.resolve([]),
-        query.to_city ? districtCityNames(prisma, query.to_city) : Promise.resolve([]),
+        fromId !== null ? nearbyPlaceIds(prisma, fromId) : Promise.resolve([]),
+        toId !== null ? nearbyPlaceIds(prisma, toId) : Promise.resolve([]),
       ]);
     if (nearby) {
-      applyCityFilters(...(await expandCities()));
+      applyCityFilters(...(await expandPlaces()));
     } else {
-      applyCityFilters(
-        query.from_city ? [query.from_city] : [],
-        query.to_city ? [query.to_city] : [],
-      );
+      applyCityFilters(fromId !== null ? [fromId] : [], toId !== null ? [toId] : []);
     }
     if (query.date) {
-      // Use the Asia/Bishkek calendar day (same helper as the calendar endpoint),
-      // not a raw UTC 24h window — otherwise date search and the calendar disagree
-      // near the UTC/Bishkek boundary.
+      // Asia/Bishkek calendar day (same helper as the calendar endpoint),
+      // floored at "now" so already-departed trips never list.
       const { start, end } = bishkekDayRange(new Date(query.date));
-      // Never list already-departed trips: floor the window at "now" so the
-      // "today" list matches the calendar count (which is departure_at > NOW()).
       const now = new Date();
       where.departureAt = { gte: start > now ? start : now, lt: end };
     }
@@ -409,6 +454,7 @@ export function createTripsService(
       };
     }
     if (query.luggage) where.luggage = query.luggage;
+    if (query.kind) where.kind = query.kind;
     if (query.only_verified || query.min_rating) {
       // Merge onto the base driver guard (isBlocked/deletedAt) — never replace it.
       where.driver = {
@@ -418,14 +464,39 @@ export function createTripsService(
       };
     }
 
-    // NB: loyalty tier is NOT a sort key here. loyaltyTier is a text column
-    // ('elite' | 'expert' | 'traveler' | 'novice') whose rank is NOT its
-    // alphabetical order ('elite' < 'expert' < 'novice' < 'traveler'), so
-    // `orderBy: { loyaltyTier: 'asc' }` mis-ranks traveler below novice. Correct
-    // tier ranking needs a CASE expression, which Prisma can't express without a
-    // raw-SQL search path (and its own cursor pagination). Driver rating is the
-    // intended quality signal and is already the primary key for rating_desc, so
-    // we drop the broken loyalty ordering rather than ship a wrong approximation.
+    const likedFor = async (rows: TripRow[]) =>
+      engagement.likedIds('trip', rows.map((r) => r.id), viewerId);
+
+    // sort=nearest: rank a bounded pool by distance from the viewer to the
+    // boarding point (exact pin, else the settlement); offset cursor "o_<n>".
+    if (query.sort === 'nearest') {
+      if (query.near_lat === undefined || query.near_lng === undefined) {
+        throw Errors.validation({ reason: 'near_point_required' });
+      }
+      const me = { lat: query.near_lat, lng: query.near_lng };
+      const pool = await prisma.trip.findMany({
+        where,
+        orderBy: [{ departureAt: 'asc' }, { id: 'asc' }],
+        take: NEAREST_POOL,
+        include: tripInclude,
+      });
+      const ranked = pool
+        .map((r) => ({ r, km: distanceKm(me, boardingPoint(r)) }))
+        .sort((a, b) => a.km - b.km);
+      const offset = query.cursor?.startsWith('o_') ? Number(query.cursor.slice(2)) : 0;
+      const slice = ranked.slice(offset, offset + query.limit);
+      const liked = await likedFor(slice.map((x) => x.r));
+      return {
+        data: slice.map((x) => ({
+          ...toCardItem(x.r, { liked: liked.has(x.r.id) }),
+          distanceKm: Math.round(x.km * 10) / 10,
+        })),
+        nextCursor: offset + query.limit < ranked.length ? `o_${offset + query.limit}` : null,
+      };
+    }
+
+    // NB: loyalty tier is deliberately NOT a sort key (its text values don't
+    // sort by rank); driver rating is the quality signal.
     const orderBy: Prisma.TripOrderByWithRelationInput[] =
       query.sort === 'price_asc'
         ? [{ pricePerSeat: 'asc' }, { departureAt: 'asc' }, { id: 'asc' }]
@@ -438,47 +509,23 @@ export function createTripsService(
         where,
         orderBy,
         ...cursorArgs({ cursor: query.cursor, limit: query.limit }),
-        include: {
-          car: true,
-          driver: {
-            select: {
-              id: true,
-              name: true,
-              avatarUrl: true,
-              rating: true,
-              ratingCount: true,
-              driverProfile: {
-                select: {
-                  carMake: true,
-                  carModel: true,
-                  carColor: true,
-                  carPlate: true,
-                  verificationStatus: true,
-                },
-              },
-            },
-          },
-        },
+        include: tripInclude,
       });
 
     let rows = await runQuery();
 
-    // Nothing matched the exact cities on the first page → widen once to the
-    // same-raion tier ("sub-cities": villages of the searched city's district)
-    // and mark the response so the client can label results as nearby.
-    if (rows.length === 0 && !nearby && !query.cursor && (query.from_city || query.to_city)) {
-      const [fromNames, toNames] = await expandCities();
-      if (fromNames.length > 1 || toNames.length > 1) {
+    // Nothing matched the exact places on the first page → widen once to the
+    // settlements within NEARBY_RADIUS_KM and mark the response as nearby.
+    if (rows.length === 0 && !nearby && !query.cursor && (fromId !== null || toId !== null)) {
+      const [fromIds, toIds] = await expandPlaces();
+      if (fromIds.length > 1 || toIds.length > 1) {
         nearby = true;
-        applyCityFilters(fromNames, toNames);
+        applyCityFilters(fromIds, toIds);
         rows = await runQuery();
       }
     }
 
-    const likedSet = await engagement.likedIds('trip', rows.map((r) => r.id), viewerId);
-    // Info-lean card DTO: only the fields the ride card renders (no metrics,
-    // no dropoff/address/luggage/seatsTotal, car = make+model). No per-page
-    // contactReveal groupBy either. Full data comes from the detail on open.
+    const likedSet = await likedFor(rows);
     const mapped = rows.map((r) => toCardItem(r, { liked: likedSet.has(r.id) }));
     const page = sliceAndNext(mapped, query.limit);
     if (!nearby) return page;
@@ -489,31 +536,22 @@ export function createTripsService(
     };
   }
 
+  async function resolveFilterPlace(
+    id: number | undefined,
+    name: string | undefined,
+  ): Promise<number | null> {
+    if (id !== undefined) return id;
+    if (!name) return null;
+    const resolved = await resolvePlaceByName(prisma, name);
+    if (resolved === null) throw Errors.validation({ reason: 'unknown_city', city: name });
+    return resolved;
+  }
+
   // ─── Detail ─────────────────────────────────────────────────────────
   async function getById(id: string, viewerId: string | null = null): Promise<TripDetail> {
     const row = await prisma.trip.findUnique({
       where: { id },
-      include: {
-        car: true,
-        driver: {
-          select: {
-            id: true,
-            name: true,
-            avatarUrl: true,
-            rating: true,
-            ratingCount: true,
-            driverProfile: {
-              select: {
-                carMake: true,
-                carModel: true,
-                carColor: true,
-                carPlate: true,
-                verificationStatus: true,
-              },
-            },
-          },
-        },
-      },
+      include: tripInclude,
     });
     if (!row) throw Errors.notFound('Trip');
 
@@ -546,7 +584,6 @@ export function createTripsService(
       comment: row.comment,
       myBooking: myBookingRow,
       preferences: (row.preferences ?? {}) as Record<string, boolean>,
-      waypoints: (row.waypoints as Array<{ city: string; address?: string }>) ?? [],
       recentRatings: recentRatings.map((r) => ({
         id: r.id,
         score: r.score,
@@ -564,7 +601,13 @@ export function createTripsService(
     driverUserId: string,
     body: TripPatchInput,
   ): Promise<TripDetail> {
-    const trip = await prisma.trip.findUnique({ where: { id } });
+    const trip = await prisma.trip.findUnique({
+      where: { id },
+      include: {
+        origin: { select: placeSelect },
+        destination: { select: placeSelect },
+      },
+    });
     if (!trip) throw Errors.notFound('Trip');
     if (trip.driverId !== driverUserId) throw Errors.forbidden({ reason: 'not_owner' });
     if (trip.status !== 'active') {
@@ -592,7 +635,29 @@ export function createTripsService(
     if (body.luggage !== undefined) data.luggage = body.luggage;
     if (body.comment !== undefined) data.comment = redactContactInfo(body.comment).clean;
     if (body.preferences !== undefined) {
-      data.preferences = body.preferences as Prisma.InputJsonValue;
+      // Merge: a patch carrying one toggle must not wipe the search flags.
+      data.preferences = {
+        ...((trip.preferences ?? {}) as Record<string, boolean>),
+        ...body.preferences,
+      } as Prisma.InputJsonValue;
+    }
+    if (body.originPoint !== undefined) {
+      assertPointNear(body.originPoint, trip.origin, 'originPoint');
+      Object.assign(
+        data,
+        pointColumns('origin', body.originPoint, await nearestAreaId(prisma, trip.originCityId, body.originPoint)),
+      );
+    }
+    if (body.destinationPoint !== undefined) {
+      assertPointNear(body.destinationPoint, trip.destination, 'destinationPoint');
+      Object.assign(
+        data,
+        pointColumns(
+          'destination',
+          body.destinationPoint,
+          await nearestAreaId(prisma, trip.destinationCityId, body.destinationPoint),
+        ),
+      );
     }
 
     await prisma.trip.update({ where: { id }, data });
@@ -670,12 +735,14 @@ export function createTripsService(
       });
       // TZ §16.1 "Водитель отменяет поездку: все bookings → cancelled_by_driver,
       //   уведомления всем, cancellations_30d++."
+      // Every live booking — 'viewed' is still a live request.
+      const live = { tripId: id, status: { in: ['pending', 'viewed', 'accepted'] } };
       const affectedBookings = await tx.booking.findMany({
-        where: { tripId: id, status: { in: ['pending', 'accepted'] } },
+        where: live,
         select: { passengerId: true },
       });
       await tx.booking.updateMany({
-        where: { tripId: id, status: { in: ['pending', 'accepted'] } },
+        where: live,
         data: {
           status: 'cancelled_by_driver',
           cancelledBy: 'driver',
@@ -752,27 +819,7 @@ export function createTripsService(
       where,
       orderBy: [orderBy, { id: 'asc' }],
       ...cursorArgs({ cursor: query.cursor, limit: query.limit }),
-      include: {
-        car: true,
-        driver: {
-          select: {
-            id: true,
-            name: true,
-            avatarUrl: true,
-            rating: true,
-            ratingCount: true,
-            driverProfile: {
-              select: {
-                carMake: true,
-                carModel: true,
-                carColor: true,
-                carPlate: true,
-                verificationStatus: true,
-              },
-            },
-          },
-        },
-      },
+      include: tripInclude,
     });
 
     const likedSet = await engagement.likedIds('trip', rows.map((r) => r.id), driverUserId);
@@ -880,16 +927,16 @@ export function createTripsService(
 
   // ─── Price suggestion ───────────────────────────────────────────────
   async function priceSuggestion(
-    from: string,
-    to: string,
+    fromId: number,
+    toId: number,
   ): Promise<{ averagePrice: number | null; sampleSize: number }> {
-    if (from === to) throw Errors.validation({ reason: 'cities_must_differ' });
+    if (fromId === toId) throw Errors.validation({ reason: 'cities_must_differ' });
 
     const since = new Date(Date.now() - 30 * 24 * 60 * 60_000);
     const trips = await prisma.trip.findMany({
       where: {
-        originCity: from,
-        destinationCity: to,
+        originCityId: fromId,
+        destinationCityId: toId,
         status: { in: ['active', 'completed'] },
         createdAt: { gte: since },
       },
@@ -909,7 +956,7 @@ export function createTripsService(
 
   // Per-day active-trip counts for a route — powers the calendar availability
   // hints in the date picker. Days are Kyrgyzstan-local (fixed UTC+6).
-  async function calendar(query: { from_city: string; to_city: string }) {
+  async function calendar(query: { from_id: number; to_id: number }) {
     const rows = await prisma.$queryRaw<{ day: string; n: number }[]>`
       SELECT to_char(departure_at AT TIME ZONE 'Asia/Bishkek', 'YYYY-MM-DD') AS day,
              COUNT(*)::int AS n
@@ -917,8 +964,8 @@ export function createTripsService(
       WHERE status = 'active'
         AND seats_available >= 1
         AND departure_at > NOW()
-        AND origin_city = ${query.from_city}
-        AND destination_city = ${query.to_city}
+        AND origin_city_id = ${query.from_id}
+        AND destination_city_id = ${query.to_id}
       GROUP BY 1
       ORDER BY 1
     `;
@@ -943,30 +990,75 @@ export function createTripsService(
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────
-export type TripRow = Prisma.TripGetPayload<{
-  include: {
-    car: true;
-    driver: {
-      select: {
-        id: true;
-        name: true;
-        avatarUrl: true;
-        rating: true;
-        ratingCount: true;
-        driverProfile: {
-          select: {
-            carMake: true;
-            carModel: true;
-            carColor: true;
-            carPlate: true;
-            carPhotoPath: true;
-            verificationStatus: true;
-          };
-        };
-      };
-    };
+export const tripInclude = {
+  car: true,
+  origin: { select: placeSelect },
+  destination: { select: placeSelect },
+  originArea: { select: { nameRu: true, nameKg: true } },
+  destinationArea: { select: { nameRu: true, nameKg: true } },
+  stops: { orderBy: { position: 'asc' }, include: { city: { select: placeSelect } } },
+  driver: {
+    select: {
+      id: true,
+      name: true,
+      avatarUrl: true,
+      rating: true,
+      ratingCount: true,
+      driverProfile: {
+        select: {
+          carMake: true,
+          carModel: true,
+          carColor: true,
+          carPlate: true,
+          carPhotoPath: true,
+          verificationStatus: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.TripInclude;
+
+export type TripRow = Prisma.TripGetPayload<{ include: typeof tripInclude }>;
+
+// Column values for an optional meeting point (null clears it).
+function pointColumns(
+  side: 'origin' | 'destination',
+  p: { lat: number; lng: number; address?: string } | null | undefined,
+  areaId: number | null = null,
+): Record<string, number | string | null> {
+  return {
+    [`${side}Lat`]: p?.lat ?? null,
+    [`${side}Lng`]: p?.lng ?? null,
+    [`${side}Address`]: p?.address ?? null,
+    [`${side}AreaId`]: areaId,
   };
-}>;
+}
+
+function toPoint(
+  lat: number | null,
+  lng: number | null,
+  address: string | null,
+  area: { nameRu: string; nameKg: string } | null,
+): MeetingPointDto | null {
+  return lat !== null && lng !== null ? { lat, lng, address, area } : null;
+}
+
+// Where a passenger boards: the pin when set, else the settlement.
+function boardingPoint(row: TripRow): { lat: number; lng: number } | null {
+  if (row.originLat !== null && row.originLng !== null) {
+    return { lat: row.originLat, lng: row.originLng };
+  }
+  return row.origin.lat !== null && row.origin.lng !== null
+    ? { lat: row.origin.lat, lng: row.origin.lng }
+    : null;
+}
+
+function distanceKm(me: { lat: number; lng: number }, p: { lat: number; lng: number } | null): number {
+  return p ? haversineKm(me, p) : Number.POSITIVE_INFINITY;
+}
+
+const stopNames = (row: TripRow, kind: 'pickup' | 'dropoff'): string[] =>
+  row.stops.filter((s) => s.kind === kind).map((s) => s.city.nameRu);
 
 // Lean projection for search/browse cards — a strict subset of toListItem.
 export function toCardItem(row: TripRow, opts: { liked: boolean }): TripCardItem {
@@ -989,9 +1081,15 @@ export function toCardItem(row: TripRow, opts: { liked: boolean }): TripCardItem
       verified: dp?.verificationStatus === 'verified',
       car,
     },
+    kind: row.kind as 'intercity' | 'airport',
+    originCityId: row.originCityId,
+    destinationCityId: row.destinationCityId,
     originCity: row.originCity,
     destinationCity: row.destinationCity,
-    pickupCities: row.pickupCities,
+    origin: toPlaceRef(row.origin),
+    destination: toPlaceRef(row.destination),
+    originPoint: toPoint(row.originLat, row.originLng, row.originAddress, row.originArea),
+    pickupCities: stopNames(row, 'pickup'),
     departureAt: row.departureAt,
     departureWindowEnd: row.departureWindowEnd,
     seatsAvailable: row.seatsAvailable,
@@ -1017,8 +1115,8 @@ export function toListItem(
         row.driver.ratingCount >= RATING_VISIBLE_AFTER ? Number(row.driver.rating) : null,
       ratingCount: row.driver.ratingCount,
       verified: dp?.verificationStatus === 'verified',
-      // Trip's own car first (Phase 1 multi-auto); legacy trips fall back to
-      // the verification profile's vehicle.
+      // Trip's own car first (multi-car garage); legacy trips fall back to the
+      // verification profile's vehicle.
       car: row.car
         ? {
             make: row.car.make,
@@ -1037,11 +1135,21 @@ export function toListItem(
             }
           : null,
     },
+    kind: row.kind as 'intercity' | 'airport',
+    originCityId: row.originCityId,
+    destinationCityId: row.destinationCityId,
     originCity: row.originCity,
     destinationCity: row.destinationCity,
-    pickupCities: row.pickupCities,
-    dropoffCities: row.dropoffCities,
-    originAddress: row.originAddress,
+    origin: toPlaceRef(row.origin),
+    destination: toPlaceRef(row.destination),
+    originPoint: toPoint(row.originLat, row.originLng, row.originAddress, row.originArea),
+    destinationPoint: toPoint(row.destinationLat, row.destinationLng, row.destinationAddress, row.destinationArea),
+    pickupCities: stopNames(row, 'pickup'),
+    dropoffCities: stopNames(row, 'dropoff'),
+    stops: row.stops.map((s) => ({
+      kind: s.kind as 'pickup' | 'dropoff',
+      place: toPlaceRef(s.city),
+    })),
     departureAt: row.departureAt,
     departureWindowEnd: row.departureWindowEnd,
     departureFlexible: row.departureFlexible,

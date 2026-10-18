@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { CITY } from '../../../tests/cities.js';
 import request from 'supertest';
 import type { Express } from 'express';
 import { testPrisma } from '../../../tests/setup.js';
@@ -42,8 +43,8 @@ describe('GET /v1/users/me/likes — favourites feed', () => {
       .post('/v1/passenger-requests')
       .set('Authorization', `Bearer ${passenger.accessToken}`)
       .send({
-        originCity: 'Бишкек',
-        destinationCity: 'Ош',
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Ош', destinationCityId: CITY['Ош'],
         seatsNeeded: 1,
         departureDate: new Date(Date.now() + 28 * 60 * 60_000).toISOString(),
       });

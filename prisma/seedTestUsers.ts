@@ -25,6 +25,7 @@
 process.loadEnvFile?.('.env');
 
 import { PrismaClient, Prisma } from '@prisma/client';
+import { placeResolver } from './seedPlaces.js';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -154,6 +155,7 @@ async function seed(): Promise<void> {
   const trips: Prisma.TripCreateManyInput[] = [];
   const requests: Prisma.PassengerRequestCreateManyInput[] = [];
 
+  const place = await placeResolver(prisma, ROUTES.flatMap((r) => [r.origin, r.destination]));
   userIds.forEach((userId, uIdx) => {
     for (let d = 0; d < DAYS; d++) {
       ROUTES.forEach((r, rIdx) => {
@@ -167,6 +169,8 @@ async function seed(): Promise<void> {
         const seatsAvailable = soldOut ? 0 : 1 + ((uIdx + d + rIdx) % seatsTotal);
         trips.push({
           driverId: userId,
+          originCityId: place(r.origin),
+          destinationCityId: place(r.destination),
           originCity: r.origin,
           destinationCity: r.destination,
           originAddress: 'Западный автовокзал',
@@ -177,10 +181,12 @@ async function seed(): Promise<void> {
           pricePerSeat: r.price + d * 20,
           luggage: LUGGAGE[rIdx % LUGGAGE.length]!,
           status: 'active',
-          preferences: { no_smoking: true } as Prisma.InputJsonValue,
+          preferences: { smoking: false } as Prisma.InputJsonValue,
         });
         requests.push({
           passengerId: userId,
+          originCityId: place(r.origin),
+          destinationCityId: place(r.destination),
           originCity: r.origin,
           destinationCity: r.destination,
           seatsNeeded: 1 + (rIdx % 3),

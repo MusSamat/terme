@@ -18,6 +18,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 import { PrismaClient, Prisma } from '@prisma/client';
+import { placeResolver } from './seedPlaces.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 
@@ -247,11 +248,14 @@ async function seedTrips(ids: Map<string, string>): Promise<SeededTrip[]> {
     { driverId: driver8, origin: 'Чолпон-Ата', destination: 'Бишкек', status: 'completed', price: 600, seatsTotal: 4, seatsAvailable: 0, departureAt: new Date(now - 7 * day), duration: 240, luggage: 'small' },
   ];
 
+  const place = await placeResolver(prisma, rows.flatMap((r) => [r.origin, r.destination]));
   const created: SeededTrip[] = [];
   for (const r of rows) {
     const trip = await prisma.trip.create({
       data: {
         driverId: r.driverId,
+        originCityId: place(r.origin),
+        destinationCityId: place(r.destination),
         originCity: r.origin,
         destinationCity: r.destination,
         originAddress: 'Западный автовокзал',
@@ -262,7 +266,7 @@ async function seedTrips(ids: Map<string, string>): Promise<SeededTrip[]> {
         pricePerSeat: r.price,
         luggage: r.luggage,
         status: r.status,
-        preferences: { no_smoking: true } as Prisma.InputJsonValue,
+        preferences: { smoking: false } as Prisma.InputJsonValue,
         cancelledReason: r.status === 'cancelled' ? 'Driver changed plans' : null,
       },
     });

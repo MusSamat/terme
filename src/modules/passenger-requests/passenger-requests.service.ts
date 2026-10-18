@@ -1,51 +1,53 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { Errors } from '@/lib/errors.js';
 import { toFileUrl } from '@/lib/uploads.js';
 import { createEngagementService } from '@/lib/engagement.js';
-import { districtCityNames } from '@/lib/cityArea.js';
+import {
+  haversineKm,
+  loadPlaces,
+  nearbyPlaceIds,
+  nearestAreaId,
+  placeSelect,
+  resolvePlaceByName,
+  toPlaceRef,
+  type PlaceRef,
+  type PlaceRow,
+} from '@/lib/places.js';
 import { redactContactInfo } from '@/lib/contentFilter.js';
 import { bishkekDayRange } from '@/lib/dates.js';
+import { estimateDurationMin } from '@/lib/routes.js';
 import type { Notifier } from '@/lib/notifier.js';
 import type { CreatePassengerRequestInput, ListRequestsInput, RespondInput, UpdatePassengerRequestInput } from './passenger-requests.schemas.js';
 
-export interface PassengerRequestDTO {
-  id: string;
-  passengerId: string;
-  originCity: string;
-  destinationCity: string;
-  seatsNeeded: number;
-  departureDate: string;
-  flexible: boolean;
-  comment: string | null;
-  status: string;
-  createdAt: string;
-  liked: boolean;
-  // The viewing driver's own response to this request (guards double-respond).
-  myResponse: { id: string; status: string } | null;
-  metrics: { views: number; likes: number; contacts: number };
-  passenger: {
-    id: string;
-    name: string;
-    avatarUrl: string | null;
-    rating: number | null;
-    ratingCount: number;
-  };
+export interface MeetingPointDto {
+  lat: number;
+  lng: number;
+  address: string | null;
+  // Жилмассив / микрорайон of the pin in Бишкек / Ош («Асанбай»).
+  area: { nameRu: string; nameKg: string } | null;
 }
 
-// Browse card DTO — a strict subset of PassengerRequestDTO carrying only what
-// the request card renders. The detail (getById) still returns the full DTO
-// (comment, metrics), fetched when a card opens. Keep in sync with the web
-// RequestCard component and the PassengerRequestCardItem OpenAPI schema.
+// Browse card DTO — what the request card renders (and the map pin needs).
+// The detail (getById) adds comment, metrics and the drop-off point.
 export interface PassengerRequestCardItem {
   id: string;
   passengerId: string;
+  kind: 'intercity' | 'airport';
+  flightNumber: string | null;
+  originCityId: number;
+  destinationCityId: number;
   originCity: string;
   destinationCity: string;
+  origin: PlaceRef;
+  destination: PlaceRef;
+  // Where the passenger waits (map pin); null → the settlement itself.
+  originPoint: MeetingPointDto | null;
   seatsNeeded: number;
   departureDate: string;
   flexible: boolean;
   status: string;
   liked: boolean;
+  // The viewing driver's own response to this request (guards double-respond).
   myResponse: { id: string; status: string } | null;
   passenger: {
     id: string;
@@ -54,109 +56,22 @@ export interface PassengerRequestCardItem {
     rating: number | null;
     ratingCount: number;
   };
+  // Only with sort=nearest: km from the viewer to where the passenger waits.
+  distanceKm?: number;
+}
+
+export interface PassengerRequestDTO extends PassengerRequestCardItem {
+  destinationPoint: MeetingPointDto | null;
+  comment: string | null;
+  createdAt: string;
+  metrics: { views: number; likes: number; contacts: number };
 }
 
 const RATING_VISIBLE_AFTER = 3;
-
-// Lean projection for browse cards — a strict subset of toDTO.
-export function toCardItem(
-  row: {
-    id: string;
-    passengerId: string;
-    originCity: string;
-    destinationCity: string;
-    seatsNeeded: number;
-    departureDate: Date;
-    flexible: boolean;
-    status: string;
-    passenger: {
-      id: string;
-      name: string;
-      avatarUrl: string | null;
-      rating: { toNumber: () => number } | number;
-      ratingCount: number;
-    };
-  },
-  opts: { liked: boolean; myResponse?: { id: string; status: string } | null },
-): PassengerRequestCardItem {
-  return {
-    id: row.id,
-    passengerId: row.passengerId,
-    originCity: row.originCity,
-    destinationCity: row.destinationCity,
-    seatsNeeded: row.seatsNeeded,
-    departureDate: row.departureDate.toISOString(),
-    flexible: row.flexible,
-    status: row.status,
-    liked: opts.liked,
-    myResponse: opts.myResponse ?? null,
-    passenger: {
-      id: row.passenger.id,
-      name: row.passenger.name,
-      avatarUrl: toFileUrl(row.passenger.avatarUrl),
-      rating:
-        row.passenger.ratingCount >= RATING_VISIBLE_AFTER
-          ? typeof row.passenger.rating === 'number'
-            ? row.passenger.rating
-            : row.passenger.rating.toNumber()
-          : null,
-      ratingCount: row.passenger.ratingCount,
-    },
-  };
-}
-
-export function toDTO(
-  row: {
-    id: string;
-    passengerId: string;
-    originCity: string;
-    destinationCity: string;
-    seatsNeeded: number;
-    departureDate: Date;
-    flexible: boolean;
-    comment: string | null;
-    status: string;
-    createdAt: Date;
-    viewsCount: number;
-    likesCount: number;
-    passenger: {
-      id: string;
-      name: string;
-      avatarUrl: string | null;
-      rating: { toNumber: () => number } | number;
-      ratingCount: number;
-    };
-  },
-  opts: { liked: boolean; contacts?: number; myResponse?: { id: string; status: string } | null },
-): PassengerRequestDTO {
-  return {
-    id: row.id,
-    passengerId: row.passengerId,
-    originCity: row.originCity,
-    destinationCity: row.destinationCity,
-    seatsNeeded: row.seatsNeeded,
-    departureDate: row.departureDate.toISOString(),
-    flexible: row.flexible,
-    comment: row.comment,
-    status: row.status,
-    createdAt: row.createdAt.toISOString(),
-    liked: opts.liked,
-    myResponse: opts.myResponse ?? null,
-    metrics: { views: row.viewsCount, likes: row.likesCount, contacts: opts.contacts ?? 0 },
-    passenger: {
-      id: row.passenger.id,
-      name: row.passenger.name,
-      avatarUrl: toFileUrl(row.passenger.avatarUrl),
-      rating:
-        row.passenger.ratingCount >= RATING_VISIBLE_AFTER
-          ? typeof row.passenger.rating === 'number'
-            ? row.passenger.rating
-            : row.passenger.rating.toNumber()
-          : null,
-      ratingCount: row.passenger.ratingCount,
-    },
-  };
-}
+// A meeting-point pin must lie within this distance of its settlement.
+const POINT_MAX_KM = 30;
+// sort=nearest ranks at most this many matching requests by distance.
+const NEAREST_POOL = 200;
 
 export const passengerSelect = {
   id: true,
@@ -165,6 +80,103 @@ export const passengerSelect = {
   rating: true,
   ratingCount: true,
 } as const;
+
+export const requestInclude = {
+  passenger: { select: passengerSelect },
+  origin: { select: placeSelect },
+  destination: { select: placeSelect },
+  originArea: { select: { nameRu: true, nameKg: true } },
+  destinationArea: { select: { nameRu: true, nameKg: true } },
+} satisfies Prisma.PassengerRequestInclude;
+
+export type RequestRow = Prisma.PassengerRequestGetPayload<{ include: typeof requestInclude }>;
+
+function toPoint(
+  lat: number | null,
+  lng: number | null,
+  address: string | null,
+  area: { nameRu: string; nameKg: string } | null,
+): MeetingPointDto | null {
+  return lat !== null && lng !== null ? { lat, lng, address, area } : null;
+}
+
+// Lean projection for browse cards — a strict subset of toDTO.
+export function toCardItem(
+  row: RequestRow,
+  opts: { liked: boolean; myResponse?: { id: string; status: string } | null },
+): PassengerRequestCardItem {
+  return {
+    id: row.id,
+    passengerId: row.passengerId,
+    kind: row.kind as 'intercity' | 'airport',
+    flightNumber: row.flightNumber,
+    originCityId: row.originCityId,
+    destinationCityId: row.destinationCityId,
+    originCity: row.originCity,
+    destinationCity: row.destinationCity,
+    origin: toPlaceRef(row.origin),
+    destination: toPlaceRef(row.destination),
+    originPoint: toPoint(row.originLat, row.originLng, row.originAddress, row.originArea),
+    seatsNeeded: row.seatsNeeded,
+    departureDate: row.departureDate.toISOString(),
+    flexible: row.flexible,
+    status: row.status,
+    liked: opts.liked,
+    myResponse: opts.myResponse ?? null,
+    passenger: {
+      id: row.passenger.id,
+      name: row.passenger.name,
+      avatarUrl: toFileUrl(row.passenger.avatarUrl),
+      rating:
+        row.passenger.ratingCount >= RATING_VISIBLE_AFTER ? row.passenger.rating.toNumber() : null,
+      ratingCount: row.passenger.ratingCount,
+    },
+  };
+}
+
+export function toDTO(
+  row: RequestRow,
+  opts: { liked: boolean; contacts?: number; myResponse?: { id: string; status: string } | null },
+): PassengerRequestDTO {
+  return {
+    ...toCardItem(row, opts),
+    destinationPoint: toPoint(row.destinationLat, row.destinationLng, row.destinationAddress, row.destinationArea),
+    comment: row.comment,
+    createdAt: row.createdAt.toISOString(),
+    metrics: { views: row.viewsCount, likes: row.likesCount, contacts: opts.contacts ?? 0 },
+  };
+}
+
+function pointColumns(
+  side: 'origin' | 'destination',
+  p: { lat: number; lng: number; address?: string } | null | undefined,
+  areaId: number | null = null,
+): Record<string, number | string | null> {
+  return {
+    [`${side}Lat`]: p?.lat ?? null,
+    [`${side}Lng`]: p?.lng ?? null,
+    [`${side}Address`]: p?.address ?? null,
+    [`${side}AreaId`]: areaId,
+  };
+}
+
+function assertPointNear(
+  point: { lat: number; lng: number } | undefined | null,
+  place: PlaceRow,
+  field: string,
+): void {
+  if (!point || place.lat === null || place.lng === null) return;
+  if (haversineKm(point, { lat: place.lat, lng: place.lng }) > POINT_MAX_KM) {
+    throw Errors.validation({ reason: 'point_far_from_city', field, max_km: POINT_MAX_KM });
+  }
+}
+
+function waitingPoint(row: RequestRow): { lat: number; lng: number } | null {
+  if (row.originLat !== null && row.originLng !== null) return { lat: row.originLat, lng: row.originLng };
+  return row.origin.lat !== null && row.origin.lng !== null
+    ? { lat: row.origin.lat, lng: row.origin.lng }
+    : null;
+}
 
 export function createPassengerRequestsService(prisma: PrismaClient) {
   const engagement = createEngagementService(prisma);
@@ -184,13 +196,11 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
       throw Errors.validation({ departureDate: 'too far ahead (max 60 days)' });
     }
 
-    // Validate cities exist
-    const [origin, dest] = await Promise.all([
-      prisma.city.findFirst({ where: { nameRu: input.originCity, isActive: true } }),
-      prisma.city.findFirst({ where: { nameRu: input.destinationCity, isActive: true } }),
-    ]);
-    if (!origin) throw Errors.validation({ originCity: 'unknown city' });
-    if (!dest) throw Errors.validation({ destinationCity: 'unknown city' });
+    const places = await loadPlaces(prisma, [input.originCityId, input.destinationCityId]);
+    const origin = places.get(input.originCityId)!;
+    const dest = places.get(input.destinationCityId)!;
+    assertPointNear(input.originPoint, origin, 'originPoint');
+    assertPointNear(input.destinationPoint, dest, 'destinationPoint');
 
     // Business rule: one open request per route per day (mirrors trips —
     // duplicates only clutter the feed).
@@ -199,8 +209,8 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
       where: {
         passengerId,
         status: 'open',
-        originCity: input.originCity,
-        destinationCity: input.destinationCity,
+        originCityId: origin.id,
+        destinationCityId: dest.id,
         departureDate: { gte: dayStart, lt: dayEnd },
       },
     });
@@ -213,106 +223,149 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
     const row = await prisma.passengerRequest.create({
       data: {
         passengerId,
-        originCity: input.originCity,
-        destinationCity: input.destinationCity,
+        kind: origin.type === 'airport' || dest.type === 'airport' ? 'airport' : 'intercity',
+        flightNumber: input.flightNumber ?? null,
+        originCityId: origin.id,
+        destinationCityId: dest.id,
+        originCity: origin.nameRu,
+        destinationCity: dest.nameRu,
+        ...pointColumns('origin', input.originPoint, await nearestAreaId(prisma, origin.id, input.originPoint)),
+        ...pointColumns('destination', input.destinationPoint, await nearestAreaId(prisma, dest.id, input.destinationPoint)),
         seatsNeeded: input.seatsNeeded,
         departureDate: departure,
         flexible: input.flexible ?? false,
         comment: redactContactInfo(input.comment).clean,
         status: 'open',
       },
-      include: { passenger: { select: passengerSelect } },
+      include: requestInclude,
     });
 
     return toDTO(row, { liked: false, myResponse: null });
+  }
+
+  async function resolveFilterPlace(
+    id: number | undefined,
+    name: string | undefined,
+  ): Promise<number | null> {
+    if (id !== undefined) return id;
+    if (!name) return null;
+    const resolved = await resolvePlaceByName(prisma, name);
+    if (resolved === null) throw Errors.validation({ reason: 'unknown_city', city: name });
+    return resolved;
   }
 
   async function list(
     input: ListRequestsInput,
     viewerId: string | null = null,
   ): Promise<{ data: PassengerRequestCardItem[]; nextCursor: string | null; nearby?: boolean }> {
-    const take = input.limit + 1;
     const now = new Date();
+    const [fromId, toId] = await Promise.all([
+      resolveFilterPlace(input.from_id, input.from_city),
+      resolveFilterPlace(input.to_id, input.to_city),
+    ]);
 
-    // "nb_" cursor prefix = the first page fell back to the same-raion tier
-    // (see trips.service.search) — keep the expanded filter on later pages.
+    // "nb_" cursor prefix = the first page fell back to the nearby (radius)
+    // tier (see trips.service.search) — keep the expanded filter on later pages.
     let nearby = input.cursor?.startsWith('nb_') ?? false;
     const cursor = nearby ? input.cursor!.slice(3) : input.cursor;
 
-    const runQuery = (fromNames: string[] | null, toNames: string[] | null) =>
-      prisma.passengerRequest.findMany({
-        where: {
-          status: 'open',
-          departureDate: { gte: now },
-          ...(fromNames ? { originCity: { in: fromNames } } : {}),
-          ...(toNames ? { destinationCity: { in: toNames } } : {}),
-          // Single-day window (same semantics as the trips search «Сегодня» chip).
-          // Day is the Asia/Bishkek calendar day (bishkekDayRange) so it matches
-          // the calendar the user sees. Floor the window at "now" so «today»
-          // doesn't list already-departed requests (departure_date > NOW()).
-          ...(input.date
-            ? (() => {
-                const { start, end } = bishkekDayRange(new Date(input.date));
-                return {
-                  departureDate: { gte: start > now ? start : now, lt: end },
-                };
-              })()
-            : {}),
-          ...(input.seats ? { seatsNeeded: { gte: input.seats } } : {}),
-        },
-        orderBy: [{ departureDate: 'asc' }, { createdAt: 'desc' }],
-        take,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-        include: { passenger: { select: passengerSelect } },
-      });
-
-    const expandCities = async (): Promise<[string[] | null, string[] | null]> =>
+    const whereFor = (fromIds: number[] | null, toIds: number[] | null): Prisma.PassengerRequestWhereInput => ({
+      status: 'open',
+      departureDate: { gte: now },
+      ...(fromIds ? { originCityId: { in: fromIds } } : {}),
+      ...(toIds ? { destinationCityId: { in: toIds } } : {}),
+      // Single Asia/Bishkek day, floored at "now".
+      ...(input.date
+        ? (() => {
+            const { start, end } = bishkekDayRange(new Date(input.date));
+            return { departureDate: { gte: start > now ? start : now, lt: end } };
+          })()
+        : {}),
+      ...(input.seats ? { seatsNeeded: { gte: input.seats } } : {}),
+      ...(input.kind ? { kind: input.kind } : {}),
+    });
+    const exact: [number[] | null, number[] | null] = [
+      fromId !== null ? [fromId] : null,
+      toId !== null ? [toId] : null,
+    ];
+    const expandPlaces = async (): Promise<[number[] | null, number[] | null]> =>
       Promise.all([
-        input.from_city ? districtCityNames(prisma, input.from_city) : Promise.resolve(null),
-        input.to_city ? districtCityNames(prisma, input.to_city) : Promise.resolve(null),
+        fromId !== null ? nearbyPlaceIds(prisma, fromId) : Promise.resolve(null),
+        toId !== null ? nearbyPlaceIds(prisma, toId) : Promise.resolve(null),
       ]);
+
+    const decorate = async (slice: RequestRow[]) => {
+      const [likedSet, myResponses] = await Promise.all([
+        engagement.likedIds('passenger_request', slice.map((r) => r.id), viewerId),
+        viewerId
+          ? prisma.passengerRequestResponse.findMany({
+              where: { driverId: viewerId, requestId: { in: slice.map((r) => r.id) } },
+              select: { id: true, requestId: true, status: true },
+            })
+          : Promise.resolve([]),
+      ]);
+      const respByRequest = new Map(myResponses.map((r) => [r.requestId, { id: r.id, status: r.status }]));
+      return (r: RequestRow) =>
+        toCardItem(r, { liked: likedSet.has(r.id), myResponse: respByRequest.get(r.id) ?? null });
+    };
+
+    // sort=nearest: drivers see who waits closest to them (offset cursor "o_<n>").
+    if (input.sort === 'nearest') {
+      if (input.near_lat === undefined || input.near_lng === undefined) {
+        throw Errors.validation({ reason: 'near_point_required' });
+      }
+      const me = { lat: input.near_lat, lng: input.near_lng };
+      const pool = await prisma.passengerRequest.findMany({
+        where: whereFor(...exact),
+        orderBy: [{ departureDate: 'asc' }, { id: 'asc' }],
+        take: NEAREST_POOL,
+        include: requestInclude,
+      });
+      const ranked = pool
+        .map((r) => {
+          const p = waitingPoint(r);
+          return { r, km: p ? haversineKm(me, p) : Number.POSITIVE_INFINITY };
+        })
+        .sort((a, b) => a.km - b.km);
+      const offset = cursor?.startsWith('o_') ? Number(cursor.slice(2)) : 0;
+      const slice = ranked.slice(offset, offset + input.limit);
+      const toCard = await decorate(slice.map((x) => x.r));
+      return {
+        data: slice.map((x) => ({ ...toCard(x.r), distanceKm: Math.round(x.km * 10) / 10 })),
+        nextCursor: offset + input.limit < ranked.length ? `o_${offset + input.limit}` : null,
+      };
+    }
+
+    const runQuery = (fromIds: number[] | null, toIds: number[] | null) =>
+      prisma.passengerRequest.findMany({
+        where: whereFor(fromIds, toIds),
+        orderBy: [{ departureDate: 'asc' }, { createdAt: 'desc' }],
+        take: input.limit + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        include: requestInclude,
+      });
 
     let rows;
     if (nearby) {
-      rows = await runQuery(...(await expandCities()));
+      rows = await runQuery(...(await expandPlaces()));
     } else {
-      rows = await runQuery(
-        input.from_city ? [input.from_city] : null,
-        input.to_city ? [input.to_city] : null,
-      );
-      // Exact cities matched nothing on the first page → widen once to the
-      // same-raion tier ("sub-cities") and mark the response.
-      if (rows.length === 0 && !cursor && (input.from_city || input.to_city)) {
-        const [fromNames, toNames] = await expandCities();
-        if ((fromNames?.length ?? 0) > 1 || (toNames?.length ?? 0) > 1) {
+      rows = await runQuery(...exact);
+      // Exact places matched nothing on the first page → widen once to the
+      // settlements within the nearby radius and mark the response.
+      if (rows.length === 0 && !cursor && (fromId !== null || toId !== null)) {
+        const [fromIds, toIds] = await expandPlaces();
+        if ((fromIds?.length ?? 0) > 1 || (toIds?.length ?? 0) > 1) {
           nearby = true;
-          rows = await runQuery(fromNames, toNames);
+          rows = await runQuery(fromIds, toIds);
         }
       }
     }
 
     const hasMore = rows.length > input.limit;
     const slice = hasMore ? rows.slice(0, input.limit) : rows;
-    const [likedSet, myResponses] = await Promise.all([
-      engagement.likedIds('passenger_request', slice.map((r) => r.id), viewerId),
-      viewerId
-        ? prisma.passengerRequestResponse.findMany({
-            where: { driverId: viewerId, requestId: { in: slice.map((r) => r.id) } },
-            select: { id: true, requestId: true, status: true },
-          })
-        : Promise.resolve([]),
-    ]);
-    const respByRequest = new Map(myResponses.map((r) => [r.requestId, { id: r.id, status: r.status }]));
+    const toCard = await decorate(slice);
     return {
-      data: slice.map((r) =>
-        // Info-lean card DTO: only the fields the request card renders (no
-        // comment, no metrics, no createdAt). No per-page contactReveal groupBy
-        // either. Full data comes from the detail (getById) when a card opens.
-        toCardItem(r, {
-          liked: likedSet.has(r.id),
-          myResponse: respByRequest.get(r.id) ?? null,
-        }),
-      ),
+      data: slice.map(toCard),
       nextCursor: hasMore ? `${nearby ? 'nb_' : ''}${slice[slice.length - 1]!.id}` : null,
       ...(nearby ? { nearby: true } : {}),
     };
@@ -327,7 +380,7 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
       where: { passengerId },
       orderBy: [{ createdAt: 'desc' }],
       take: LIMIT + 1,
-      include: { passenger: { select: passengerSelect } },
+      include: requestInclude,
     });
     const hasMore = rows.length > LIMIT;
     const slice = hasMore ? rows.slice(0, LIMIT) : rows;
@@ -357,10 +410,12 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
     passengerId: string,
     input: UpdatePassengerRequestInput,
   ): Promise<PassengerRequestDTO> {
-    const req = await prisma.passengerRequest.findUnique({ where: { id } });
+    const req = await prisma.passengerRequest.findUnique({ where: { id }, include: requestInclude });
     if (!req) throw Errors.notFound('PassengerRequest');
     if (req.passengerId !== passengerId) throw Errors.forbidden();
     if (req.status !== 'open') throw Errors.conflict('Request is not open');
+    if (input.originPoint) assertPointNear(input.originPoint, req.origin, 'originPoint');
+    if (input.destinationPoint) assertPointNear(input.destinationPoint, req.destination, 'destinationPoint');
 
     if (input.departureDate !== undefined) {
       const departure = new Date(input.departureDate);
@@ -376,8 +431,19 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
         ...(input.seatsNeeded !== undefined ? { seatsNeeded: input.seatsNeeded } : {}),
         ...(input.departureDate !== undefined ? { departureDate: new Date(input.departureDate) } : {}),
         ...(input.flexible !== undefined ? { flexible: input.flexible } : {}),
+        ...(input.flightNumber !== undefined ? { flightNumber: input.flightNumber } : {}),
         ...(input.comment !== undefined
           ? { comment: input.comment === null ? null : redactContactInfo(input.comment).clean }
+          : {}),
+        ...(input.originPoint !== undefined
+          ? pointColumns('origin', input.originPoint, await nearestAreaId(prisma, req.originCityId, input.originPoint))
+          : {}),
+        ...(input.destinationPoint !== undefined
+          ? pointColumns(
+              'destination',
+              input.destinationPoint,
+              await nearestAreaId(prisma, req.destinationCityId, input.destinationPoint),
+            )
           : {}),
       },
     });
@@ -387,7 +453,7 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
   async function getById(id: string, viewerId: string | null = null): Promise<PassengerRequestDTO> {
     const row = await prisma.passengerRequest.findUnique({
       where: { id },
-      include: { passenger: { select: passengerSelect } },
+      include: requestInclude,
     });
     if (!row) throw Errors.notFound('PassengerRequest');
     const [liked, myResp] = await Promise.all([
@@ -427,15 +493,15 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
 
   // Per-day open-request counts for a route — calendar hints in the date
   // picker. Days are Kyrgyzstan-local (fixed UTC+6).
-  async function calendar(query: { from_city: string; to_city: string }) {
+  async function calendar(query: { from_id: number; to_id: number }) {
     const rows = await prisma.$queryRaw<{ day: string; n: number }[]>`
       SELECT to_char(departure_date AT TIME ZONE 'Asia/Bishkek', 'YYYY-MM-DD') AS day,
              COUNT(*)::int AS n
       FROM passenger_requests
       WHERE status = 'open'
         AND departure_date > NOW()
-        AND origin_city = ${query.from_city}
-        AND destination_city = ${query.to_city}
+        AND origin_city_id = ${query.from_id}
+        AND destination_city_id = ${query.to_id}
       GROUP BY 1
       ORDER BY 1
     `;
@@ -627,30 +693,43 @@ export function createPassengerRequestResponsesService(prisma: PrismaClient, not
           id: string;
           passenger_id: string;
           status: string;
-          origin_city: string;
-          destination_city: string;
           seats_needed: number;
         }>
       >`
-        SELECT id, passenger_id, status, origin_city, destination_city, seats_needed
+        SELECT id, passenger_id, status, seats_needed
         FROM passenger_requests WHERE id = ${requestId}::uuid FOR UPDATE
       `;
       const request = locked[0];
       if (!request) throw Errors.notFound('PassengerRequest');
       if (request.passenger_id !== passengerId) throw Errors.forbidden();
       if (request.status !== 'open') throw Errors.conflict('Request already closed');
+      const full = await tx.passengerRequest.findUniqueOrThrow({
+        where: { id: requestId },
+        include: requestInclude,
+      });
 
-      // Create a Trip for the driver
+      // Create a Trip for the driver — it inherits the passenger's places and
+      // pins, so the driver's map shows exactly where to pick them up.
       const trip = await tx.trip.create({
         data: {
           driverId: response.driverId,
-          originCity: request.origin_city,
-          destinationCity: request.destination_city,
-          originAddress: request.origin_city,
+          kind: full.kind,
+          originCityId: full.originCityId,
+          destinationCityId: full.destinationCityId,
+          originCity: full.originCity,
+          destinationCity: full.destinationCity,
+          originAddress: full.originAddress,
+          originLat: full.originLat,
+          originLng: full.originLng,
+          destinationAddress: full.destinationAddress,
+          destinationLat: full.destinationLat,
+          destinationLng: full.destinationLng,
+          originAreaId: full.originAreaId,
+          destinationAreaId: full.destinationAreaId,
           // Validated non-past above → the 'direct' trip is born with a future
           // departure the trips lifecycle can complete.
           departureAt: response.departureTime,
-          estimatedDurationMin: 0,
+          estimatedDurationMin: estimateDurationMin(full.origin, full.destination),
           seatsTotal: request.seats_needed,
           // All seats are consumed by the accepted booking created below, so a
           // 'direct' trip carries no public availability.
@@ -669,6 +748,7 @@ export function createPassengerRequestResponsesService(prisma: PrismaClient, not
           tripId: trip.id,
           passengerId,
           seatsCount: request.seats_needed,
+          pricePerSeatSnapshot: response.price,
           status: 'accepted',
         },
       });

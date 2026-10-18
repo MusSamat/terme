@@ -151,6 +151,9 @@ export const openapiDocument = {
           {
             type: 'object',
             properties: {
+              surname: { type: 'string', nullable: true },
+              preferredMode: { type: 'string', enum: ['passenger', 'driver'] },
+              hasPassword: { type: 'boolean', description: 'Web sign-in password is set' },
               phone: { type: 'string' },
               phoneVerified: { type: 'boolean' },
               telegramLinked: { type: 'boolean' },
@@ -165,15 +168,45 @@ export const openapiDocument = {
       },
 
       // ─── Cities ───────────────────────────────────────────────────
-      City: {
+      // A settlement of the SOATE directory. raion / oblast disambiguate
+      // homonyms in pickers («Кара-Суу · Ноокенский район, Жалал-Абадская обл.»).
+      Place: {
         type: 'object',
+        required: ['id', 'type', 'nameRu', 'nameKg'],
         properties: {
           id: { type: 'integer' },
+          type: { type: 'string', enum: ['capital', 'city', 'town', 'village', 'airport'] },
           nameRu: { type: 'string' },
           nameKg: { type: 'string' },
-          region: { type: 'string', nullable: true },
           lat: { type: 'number', nullable: true },
           lng: { type: 'number', nullable: true },
+          raion: {
+            type: 'object',
+            nullable: true,
+            properties: { nameRu: { type: 'string' }, nameKg: { type: 'string' } },
+          },
+          oblast: {
+            type: 'object',
+            nullable: true,
+            properties: { nameRu: { type: 'string' }, nameKg: { type: 'string' } },
+          },
+        },
+      },
+      // Exact boarding / drop-off spot inside a settlement (map pin).
+      MeetingPoint: {
+        type: 'object',
+        required: ['lat', 'lng'],
+        properties: {
+          lat: { type: 'number' },
+          lng: { type: 'number' },
+          address: { type: 'string', nullable: true, maxLength: 200 },
+          area: {
+            type: 'object',
+            nullable: true,
+            readOnly: true,
+            description: 'Жилмассив of the pin (Бишкек / Ош), derived by the server',
+            properties: { nameRu: { type: 'string' }, nameKg: { type: 'string' } },
+          },
         },
       },
 
@@ -231,15 +264,22 @@ export const openapiDocument = {
               },
             },
           },
-          originCity: { type: 'string' },
-          destinationCity: { type: 'string' },
+          kind: { type: 'string', enum: ['intercity', 'airport'] },
+          originCityId: { type: 'integer' },
+          destinationCityId: { type: 'integer' },
+          originCity: { type: 'string', description: 'name_ru snapshot' },
+          destinationCity: { type: 'string', description: 'name_ru snapshot' },
+          origin: { $ref: '#/components/schemas/Place' },
+          destination: { $ref: '#/components/schemas/Place' },
+          originPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
           pickupCities: { type: 'array', items: { type: 'string' } },
           departureAt: { type: 'string', format: 'date-time' },
           departureWindowEnd: { type: 'string', format: 'date-time', nullable: true },
           seatsAvailable: { type: 'integer' },
           pricePerSeat: { type: 'integer' },
-          status: { type: 'string', enum: ['active', 'completed', 'cancelled'] },
+          status: { type: 'string', enum: ['active', 'direct', 'completed', 'cancelled'] },
           liked: { type: 'boolean', description: 'Whether the requesting viewer liked this listing' },
+          distanceKm: { type: 'number', description: 'Only with sort=nearest' },
         },
       },
       TripListItem: {
@@ -268,10 +308,29 @@ export const openapiDocument = {
               },
             },
           },
-          originCity: { type: 'string' },
-          destinationCity: { type: 'string' },
-          originAddress: { type: 'string' },
+          kind: { type: 'string', enum: ['intercity', 'airport'] },
+          originCityId: { type: 'integer' },
+          destinationCityId: { type: 'integer' },
+          originCity: { type: 'string', description: 'name_ru snapshot' },
+          destinationCity: { type: 'string', description: 'name_ru snapshot' },
+          origin: { $ref: '#/components/schemas/Place' },
+          destination: { $ref: '#/components/schemas/Place' },
+          originPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
+          destinationPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
+          pickupCities: { type: 'array', items: { type: 'string' } },
+          dropoffCities: { type: 'array', items: { type: 'string' } },
+          stops: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                kind: { type: 'string', enum: ['pickup', 'dropoff'] },
+                place: { $ref: '#/components/schemas/Place' },
+              },
+            },
+          },
           departureAt: { type: 'string', format: 'date-time' },
+          departureWindowEnd: { type: 'string', format: 'date-time', nullable: true },
           departureFlexible: { type: 'boolean' },
           estimatedDurationMin: { type: 'integer' },
           seatsTotal: { type: 'integer' },
@@ -279,7 +338,7 @@ export const openapiDocument = {
           pricePerSeat: { type: 'integer' },
           priceNegotiable: { type: 'boolean' },
           luggage: { type: 'string', enum: ['yes', 'small', 'no'] },
-          status: { type: 'string', enum: ['active', 'completed', 'cancelled'] },
+          status: { type: 'string', enum: ['active', 'direct', 'completed', 'cancelled'] },
           createdAt: { type: 'string', format: 'date-time' },
           liked: { type: 'boolean', description: 'Whether the requesting viewer liked this listing' },
           myResponse: {
@@ -309,7 +368,6 @@ export const openapiDocument = {
                 properties: { id: { type: 'string' }, status: { type: 'string' } },
               },
               preferences: { type: 'object', additionalProperties: { type: 'boolean' } },
-              waypoints: { type: 'array', items: { type: 'object' } },
               recentRatings: { type: 'array', items: { type: 'object' } },
             },
           },
@@ -710,7 +768,10 @@ export const openapiDocument = {
                 type: 'object',
                 properties: {
                   name: { type: 'string', minLength: 2, maxLength: 50 },
+                  surname: { type: 'string', maxLength: 100 },
+                  bio: { type: 'string', maxLength: 300 },
                   language: { type: 'string', enum: ['ru', 'kg'] },
+                  preferredMode: { type: 'string', enum: ['passenger', 'driver'] },
                   termsAccepted: { type: 'boolean', enum: [true] },
                 },
               },
@@ -875,17 +936,178 @@ export const openapiDocument = {
     '/cities': {
       get: {
         tags: ['Cities'],
-        summary: 'Active KG cities',
+        summary: 'Settlements autocomplete (RU / KG / Latin / wrong layout); no q → top places',
+        security: [],
+        parameters: [
+          { name: 'q', in: 'query', schema: { type: 'string', maxLength: 100 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 20 } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { data: { type: 'array', items: { $ref: '#/components/schemas/Place' } } } },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/cities/airports': {
+      get: {
+        tags: ['Cities'],
+        summary: 'Airports with the city each one serves (airport transfers)',
         security: [],
         responses: {
           '200': {
             description: 'OK',
             content: {
               'application/json': {
-                schema: { type: 'object', properties: { data: { type: 'array', items: { $ref: '#/components/schemas/City' } } } },
+                schema: {
+                  type: 'object',
+                  properties: {
+                    data: {
+                      type: 'array',
+                      items: {
+                        allOf: [
+                          { $ref: '#/components/schemas/Place' },
+                          {
+                            type: 'object',
+                            properties: {
+                              serves: { allOf: [{ $ref: '#/components/schemas/Place' }], nullable: true },
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
               },
             },
           },
+        },
+      },
+    },
+    '/cities/nearest': {
+      get: {
+        tags: ['Cities'],
+        summary: 'The settlement a GPS point is in (prefills «Откуда»)',
+        security: [],
+        parameters: [
+          { name: 'lat', in: 'query', required: true, schema: { type: 'number' } },
+          { name: 'lng', in: 'query', required: true, schema: { type: 'number' } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { data: { allOf: [{ $ref: '#/components/schemas/Place' }], nullable: true } },
+                },
+              },
+            },
+          },
+          ...errorResponses,
+        },
+      },
+    },
+    '/cities/{id}/spots': {
+      get: {
+        tags: ['Cities'],
+        summary: 'Pin picker inside Бишкек / Ош: departure spots, then жилмассивы (draggable)',
+        security: [],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' } },
+          { name: 'q', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK (empty for other places)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    data: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          kind: { type: 'string', enum: ['spot', 'area'] },
+                          nameRu: { type: 'string' },
+                          nameKg: { type: 'string' },
+                          lat: { type: 'number' },
+                          lng: { type: 'number' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/map': {
+      get: {
+        tags: ['Map'],
+        summary: 'Trips / requests in a viewport, grid-clustered by zoom',
+        description:
+          'Each listing sits at its exact pin (driver boarding spot / where the passenger waits) or, '
+          + 'without one, its settlement (exact=false). Cells holding one listing come back as items, '
+          + 'denser cells as clusters. No clustering from zoom 14.',
+        security: [],
+        parameters: [
+          { name: 'kind', in: 'query', required: true, schema: { type: 'string', enum: ['trips', 'requests'] } },
+          { name: 'bbox', in: 'query', required: true, schema: { type: 'string', example: '74.4,42.8,74.8,42.95' }, description: 'west,south,east,north' },
+          { name: 'zoom', in: 'query', required: true, schema: { type: 'integer', minimum: 3, maximum: 20 } },
+          { name: 'to_id', in: 'query', schema: { type: 'integer' } },
+          { name: 'ride', in: 'query', schema: { type: 'string', enum: ['intercity', 'airport'] } },
+          { name: 'date', in: 'query', schema: { type: 'string', format: 'date-time' } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    items: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string', format: 'uuid' },
+                          lat: { type: 'number' },
+                          lng: { type: 'number' },
+                          exact: { type: 'boolean' },
+                          originCity: { type: 'string' },
+                          destinationCity: { type: 'string' },
+                          destinationCityId: { type: 'integer' },
+                          departureAt: { type: 'string', format: 'date-time' },
+                          seats: { type: 'integer' },
+                          price: { type: 'integer', nullable: true },
+                        },
+                      },
+                    },
+                    clusters: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: { lat: { type: 'number' }, lng: { type: 'number' }, count: { type: 'integer' } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          ...errorResponses,
         },
       },
     },
@@ -965,16 +1187,24 @@ export const openapiDocument = {
         tags: ['Trips'],
         summary: 'Search trips',
         parameters: [
-          { name: 'from_city', in: 'query', required: true, schema: { type: 'string' } },
-          { name: 'to_city', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'from_id', in: 'query', schema: { type: 'integer' } },
+          { name: 'to_id', in: 'query', schema: { type: 'integer' } },
+          { name: 'from_city', in: 'query', schema: { type: 'string' }, description: 'Name fallback (SEO / bot) when no from_id' },
+          { name: 'to_city', in: 'query', schema: { type: 'string' }, description: 'Name fallback when no to_id' },
+          { name: 'near_lat', in: 'query', schema: { type: 'number' }, description: 'Viewer point for sort=nearest' },
+          { name: 'near_lng', in: 'query', schema: { type: 'number' } },
           { name: 'date', in: 'query', schema: { type: 'string', format: 'date-time' } },
           { name: 'seats', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 4 } },
           { name: 'min_price', in: 'query', schema: { type: 'integer' } },
           { name: 'max_price', in: 'query', schema: { type: 'integer' } },
           { name: 'only_verified', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
           { name: 'luggage', in: 'query', schema: { type: 'string', enum: ['yes', 'small', 'no'] } },
-          { name: 'sort', in: 'query', schema: { type: 'string', enum: ['time', 'price_asc', 'rating_desc'] } },
-          { name: 'cursor', in: 'query', schema: { type: 'string', format: 'uuid' } },
+          { name: 'kind', in: 'query', schema: { type: 'string', enum: ['intercity', 'airport'] }, description: 'airport = transfers' },
+          { name: 'women_only', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+          { name: 'no_smoking', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+          { name: 'pets', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+          { name: 'sort', in: 'query', schema: { type: 'string', enum: ['time', 'price_asc', 'rating_desc', 'nearest'] } },
+          { name: 'cursor', in: 'query', schema: { type: 'string' }, description: 'Opaque' },
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } },
         ],
         responses: {
@@ -997,15 +1227,17 @@ export const openapiDocument = {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['originCity', 'destinationCity', 'originAddress', 'departureAt', 'seatsTotal', 'pricePerSeat'],
+                required: ['originCityId', 'destinationCityId', 'departureAt', 'seatsTotal', 'pricePerSeat'],
                 properties: {
-                  originCity: { type: 'string' },
-                  destinationCity: { type: 'string' },
-                  originAddress: { type: 'string' },
-                  originLat: { type: 'number' },
-                  originLng: { type: 'number' },
-                  waypoints: { type: 'array' },
+                  originCityId: { type: 'integer' },
+                  destinationCityId: { type: 'integer' },
+                  originPoint: { $ref: '#/components/schemas/MeetingPoint' },
+                  destinationPoint: { $ref: '#/components/schemas/MeetingPoint' },
+                  pickupCityIds: { type: 'array', items: { type: 'integer' }, maxItems: 5 },
+                  dropoffCityIds: { type: 'array', items: { type: 'integer' }, maxItems: 5 },
+                  carId: { type: 'string', format: 'uuid' },
                   departureAt: { type: 'string', format: 'date-time' },
+                  departureWindowEnd: { type: 'string', format: 'date-time' },
                   departureFlexible: { type: 'boolean' },
                   seatsTotal: { type: 'integer', minimum: 1, maximum: 7 },
                   pricePerSeat: { type: 'integer', minimum: 50, maximum: 10000 },
@@ -1059,13 +1291,15 @@ export const openapiDocument = {
                   priceNegotiable: { type: 'boolean' },
                   comment: { type: 'string', nullable: true },
                   luggage: { type: 'string', enum: ['yes', 'small', 'no'] },
-                  preferences: { type: 'object' },
+                  preferences: { type: 'object', description: 'Merged into the stored preferences' },
+                  originPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
+                  destinationPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
                 },
               },
             },
           },
         },
-        responses: { '200': { description: 'OK' }, ...errorResponses },
+        responses: { '200': { description: 'OK', content: jsonOk('TripDetail') }, ...errorResponses },
       },
       delete: {
         tags: ['Trips'],
@@ -1105,8 +1339,8 @@ export const openapiDocument = {
         tags: ['Trips'],
         summary: 'Average price on route (last 30d)',
         parameters: [
-          { name: 'from', in: 'query', required: true, schema: { type: 'string' } },
-          { name: 'to', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'from_id', in: 'query', required: true, schema: { type: 'integer' } },
+          { name: 'to_id', in: 'query', required: true, schema: { type: 'integer' } },
         ],
         responses: { '200': { description: 'OK' }, ...errorResponses },
       },
@@ -1473,23 +1707,32 @@ export const openapiDocument = {
     '/admin/cities': {
       get: {
         tags: ['Admin'],
-        summary: 'Cities (admin view)',
+        summary: 'Search the SOATE directory (approx=true → points to fix by hand)',
+        parameters: [
+          { name: 'q', in: 'query', schema: { type: 'string' } },
+          { name: 'type', in: 'query', schema: { type: 'string' } },
+          { name: 'approx', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
+          { name: 'cursor', in: 'query', schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } },
+        ],
         responses: { '200': { description: 'OK' }, ...errorResponses },
       },
-      post: {
+    },
+    '/admin/cities/{id}': {
+      patch: {
         tags: ['Admin'],
-        summary: 'Add city (superadmin)',
+        summary: 'Correct a place: names, aliases, map point, visibility (superadmin)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
         requestBody: {
           required: true,
           content: {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['nameRu', 'nameKg'],
                 properties: {
                   nameRu: { type: 'string' },
                   nameKg: { type: 'string' },
-                  region: { type: 'string' },
+                  aliases: { type: 'array', items: { type: 'string' } },
                   lat: { type: 'number' },
                   lng: { type: 'number' },
                   isActive: { type: 'boolean' },
@@ -1498,14 +1741,6 @@ export const openapiDocument = {
             },
           },
         },
-        responses: { '201': { description: 'Created' }, ...errorResponses },
-      },
-    },
-    '/admin/cities/{id}': {
-      patch: {
-        tags: ['Admin'],
-        summary: 'Update city (superadmin)',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
         responses: { '200': { description: 'OK' }, ...errorResponses },
       },
     },

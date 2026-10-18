@@ -209,24 +209,39 @@ describe('Admin users block/unblock', () => {
   });
 });
 
-describe('Admin cities', () => {
-  it('POST requires superadmin role; city creation via API is disabled (use seed script)', async () => {
+describe('Admin cities (SOATE directory corrections)', () => {
+  it('searches the directory and filters approximate points', async () => {
+    const a = await createAdmin(testPrisma);
+    const res = await request(app)
+      .get('/v1/admin/cities?q=кара-суу&type=town')
+      .set('Authorization', `Bearer ${a.accessToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data[0]).toMatchObject({ nameRu: 'Кара-Суу', type: 'town' });
+    const approx = await request(app)
+      .get('/v1/admin/cities?approx=true&limit=5')
+      .set('Authorization', `Bearer ${a.accessToken}`);
+    expect(approx.body.data.every((c: { coordApprox: boolean }) => c.coordApprox)).toBe(true);
+  });
+
+  it('superadmin fixes a point (no longer approximate); regular admin is 403', async () => {
     const regular = await createAdmin(testPrisma, { role: 'admin' });
     const sa = await createAdmin(testPrisma, { role: 'superadmin' });
-
-    // Regular admin is rejected by role check before service runs.
+    const target = await testPrisma.city.findFirstOrThrow({ where: { coordApprox: true } });
     const denied = await request(app)
-      .post('/v1/admin/cities')
+      .patch(`/v1/admin/cities/${target.id}`)
       .set('Authorization', `Bearer ${regular.accessToken}`)
-      .send({ nameRu: 'Тест', nameKg: 'Тест' });
+      .send({ lat: 41.5, lng: 74.5 });
     expect(denied.status).toBe(403);
-
-    // Superadmin passes role check but service intentionally rejects (seed-only design).
-    const rejected = await request(app)
-      .post('/v1/admin/cities')
+    const ok = await request(app)
+      .patch(`/v1/admin/cities/${target.id}`)
       .set('Authorization', `Bearer ${sa.accessToken}`)
-      .send({ nameRu: 'Тест1', nameKg: 'Тест1' });
-    expect(rejected.status).toBe(409);
+      .send({ lat: 41.5, lng: 74.5 });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toMatchObject({ lat: 41.5, lng: 74.5, coordApprox: false });
+    await testPrisma.city.update({
+      where: { id: target.id },
+      data: { lat: target.lat, lng: target.lng, coordApprox: true },
+    });
   });
 });
 

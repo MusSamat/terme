@@ -21,7 +21,7 @@ export interface AdminTripItem {
 }
 
 export interface AdminTripDetail extends AdminTripItem {
-  originAddress: string;
+  originAddress: string | null;
   comment: string | null;
   driverProfile: {
     verificationStatus: string;

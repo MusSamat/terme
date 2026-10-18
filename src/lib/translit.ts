@@ -31,14 +31,15 @@ export function latinToCyrillic(input: string): string {
 }
 
 /**
- * Свести RU/KG-варианты букв к одному виду для сравнения (ё→е, ө→о, ү→у,
- * ң→н) — «озгон» находит «Өзгөн». В SQL то же самое делает translate().
+ * Свести RU/KG-варианты букв к одному виду для сравнения (дж→ж, ё→е, ө→о,
+ * ү→у, ң→н) — «озгон» находит «Өзгөн», «джалал» — «Жалал-Абад». В SQL то же
+ * самое делает функция kg_fold() (миграция 20261018130000).
  */
 export const CYR_FOLD_FROM = 'ёөүң';
 export const CYR_FOLD_TO = 'еоун';
 
 export function foldCyrillic(input: string): string {
-  let s = input.toLowerCase();
+  let s = input.toLowerCase().split('дж').join('ж');
   for (let i = 0; i < CYR_FOLD_FROM.length; i++) {
     s = s.split(CYR_FOLD_FROM[i]!).join(CYR_FOLD_TO[i]!);
   }

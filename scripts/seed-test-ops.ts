@@ -1,4 +1,5 @@
 import { PrismaClient, Prisma } from '@prisma/client';
+import { placeResolver } from '../prisma/seedPlaces.js';
 
 const prisma = new PrismaClient();
 const DAY = 86_400_000;
@@ -30,6 +31,7 @@ async function main(): Promise<void> {
     ['Бишкек', 'Чолпон-Ата', 500],
   ];
 
+  const place = await placeResolver(prisma, routes.flatMap(([o, d]) => [o, d]));
   let trips = 0;
   for (let i = 0; i < 10; i++) {
     const [o, d, price] = routes[i]!;
@@ -37,6 +39,8 @@ async function main(): Promise<void> {
     await prisma.trip.create({
       data: {
         driverId: drivers[i % drivers.length]!,
+        originCityId: place(o),
+        destinationCityId: place(d),
         originCity: o,
         destinationCity: d,
         originAddress: `Автовокзал ${o}`,
@@ -47,7 +51,7 @@ async function main(): Promise<void> {
         pricePerSeat: price,
         luggage: 'small',
         status: 'active',
-        preferences: { no_smoking: true } as Prisma.InputJsonValue,
+        preferences: { smoking: false } as Prisma.InputJsonValue,
       },
     });
     trips++;
@@ -59,7 +63,9 @@ async function main(): Promise<void> {
     await prisma.passengerRequest.create({
       data: {
         passengerId: passengers[i % passengers.length]!,
-        originCity: d, // reversed direction from the trips
+        originCityId: place(d), // reversed direction from the trips
+        destinationCityId: place(o),
+        originCity: d,
         destinationCity: o,
         seatsNeeded: 1 + (i % 3),
         departureDate: new Date(now + (i + 3) * DAY),

@@ -205,8 +205,8 @@ export function createRoutesRouter(prisma: PrismaClient): Router {
     requireAuth,
     validate({ query: PriceSuggestionQuery }),
     asyncHandler(async (req, res) => {
-      const { from, to } = req.query as unknown as { from: string; to: string };
-      const result = await service.priceSuggestion(from, to);
+      const { from_id, to_id } = req.query as unknown as { from_id: number; to_id: number };
+      const result = await service.priceSuggestion(from_id, to_id);
       res.json(result);
     }),
   );

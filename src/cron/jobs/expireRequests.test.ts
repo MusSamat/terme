@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CITY } from '../../../tests/cities.js';
 import { testPrisma } from '../../../tests/setup.js';
 import { expireRequestsJob } from './expireRequests.js';
 import { createUser } from '../../../tests/factories.js';
@@ -8,8 +9,8 @@ describe('expire_requests cron', () => {
     const passenger = await createUser(testPrisma);
     const base = {
       passengerId: passenger.id,
-      originCity: 'Бишкек',
-      destinationCity: 'Ош',
+      originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+      destinationCity: 'Ош', destinationCityId: CITY['Ош'],
       seatsNeeded: 1,
     };
 

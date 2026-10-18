@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { CITY } from '../../../tests/cities.js';
 import request from 'supertest';
 import type { Express } from 'express';
 import { testPrisma } from '../../../tests/setup.js';
@@ -25,8 +26,8 @@ const tomorrow = () => new Date(Date.now() + 26 * 60 * 60_000).toISOString();
 const dayAfter  = () => new Date(Date.now() + 50 * 60 * 60_000).toISOString();
 
 const validBody = () => ({
-  originCity:      'Бишкек',
-  destinationCity: 'Ош',
+  originCity:      'Бишкек', originCityId: CITY['Бишкек'],
+  destinationCity: 'Ош', destinationCityId: CITY['Ош'],
   seatsNeeded:     1,
   departureDate:   tomorrow(),
   flexible:        false,
@@ -64,7 +65,7 @@ describe('POST /v1/passenger-requests', () => {
     expect(dup.body.error.details.reason).toBe('duplicate_route_day');
 
     // Reverse route (A->B vs B->A) on the same day is a different route -> OK.
-    const reverse = await createRequest(p, { originCity: 'Ош', destinationCity: 'Бишкек' });
+    const reverse = await createRequest(p, { originCity: 'Ош', originCityId: CITY['Ош'], destinationCity: 'Бишкек', destinationCityId: CITY['Бишкек'] });
     expect(reverse.status).toBe(201);
 
     // Same route on another day -> OK.
@@ -94,13 +95,13 @@ describe('POST /v1/passenger-requests', () => {
 
   it('400 for unknown origin city', async () => {
     const p = await createUser(testPrisma);
-    const res = await createRequest(p, { originCity: 'НеизвестныйГород' });
+    const res = await createRequest(p, { originCity: 'НеизвестныйГород', originCityId: 999999 });
     expect(res.status).toBe(400);
   });
 
   it('400 for unknown destination city', async () => {
     const p = await createUser(testPrisma);
-    const res = await createRequest(p, { destinationCity: 'НеизвестныйГород' });
+    const res = await createRequest(p, { destinationCity: 'НеизвестныйГород', destinationCityId: 999999 });
     expect(res.status).toBe(400);
   });
 
@@ -130,7 +131,7 @@ describe('GET /v1/passenger-requests', () => {
   it('filters by from_city', async () => {
     const p = await createUser(testPrisma);
     await createRequest(p);                                             // Бишкек → Ош
-    await createRequest(p, { originCity: 'Ош', destinationCity: 'Каракол' });
+    await createRequest(p, { originCity: 'Ош', originCityId: CITY['Ош'], destinationCity: 'Каракол', destinationCityId: CITY['Каракол'] });
 
     const res = await request(app).get('/v1/passenger-requests?from_city=Ош');
     expect(res.status).toBe(200);
@@ -141,7 +142,7 @@ describe('GET /v1/passenger-requests', () => {
   it('filters by to_city', async () => {
     const p = await createUser(testPrisma);
     await createRequest(p);                                             // → Ош
-    await createRequest(p, { originCity: 'Ош', destinationCity: 'Каракол' });
+    await createRequest(p, { originCity: 'Ош', originCityId: CITY['Ош'], destinationCity: 'Каракол', destinationCityId: CITY['Каракол'] });
 
     const res = await request(app).get('/v1/passenger-requests?to_city=Каракол');
     expect(res.status).toBe(200);
