@@ -21,7 +21,6 @@ export interface AdminUserListItem {
   phone: string;
   roles: string[];
   language: string;
-  // false = provisional Telegram account without a confirmed phone
   phoneConfirmed: boolean;
   avatarUrl: string | null;
   rating: number | null;
@@ -127,7 +126,7 @@ export function createAdminUsersService(
       phone: publicPhone(u.phone),
       roles: u.roles,
       language: u.language,
-      phoneConfirmed: u.phoneVerifiedAt !== null && !u.phone.startsWith('+prov:') && !u.phone.startsWith('+tg:'),
+      phoneConfirmed: u.phoneVerifiedAt !== null,
       avatarUrl: toFileUrl(u.avatarUrl),
       rating: u.ratingCount >= 3 ? Number(u.rating) : null,
       ratingCount: u.ratingCount,
@@ -178,7 +177,7 @@ export function createAdminUsersService(
       createdAt: u.createdAt,
       complaintsCount: u._count.complaintsTargeting,
       language: u.language,
-      phoneConfirmed: u.phoneVerifiedAt !== null && !u.phone.startsWith('+prov:') && !u.phone.startsWith('+tg:'),
+      phoneConfirmed: u.phoneVerifiedAt !== null,
       avatarUrl: toFileUrl(u.avatarUrl),
       lastSeenAt: u.lastSeenAt,
       phoneVerifiedAt: u.phoneVerifiedAt,

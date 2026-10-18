@@ -3,7 +3,7 @@ import request from 'supertest';
 import type { Express } from 'express';
 import { testPrisma } from '../../../tests/setup.js';
 import { createApp } from '@/server.js';
-import { createTrip, createUser, createVerifiedDriver, seedLaunchCities } from '../../../tests/factories.js';
+import { createUser, createVerifiedDriver, seedLaunchCities } from '../../../tests/factories.js';
 import { NoopNotifier } from '@/lib/notifier.js';
 
 let app: Express;
@@ -427,20 +427,6 @@ describe('GET /v1/bookings/my and /incoming', () => {
       .get('/v1/bookings/incoming')
       .set('Authorization', `Bearer ${d.accessToken}`);
     expect(after.body.data).toHaveLength(0);
-  });
-});
-
-describe('requirePhone gate (provisional Telegram accounts)', () => {
-  it('blocks a +prov: user from creating a booking with phone_required', async () => {
-    const driver = await createVerifiedDriver(testPrisma, { plate: '09KG900XYZ' });
-    const trip = await createTrip(testPrisma, driver.id);
-    const prov = await createUser(testPrisma, { phone: `+prov:${Date.now()}` });
-    const res = await request(app)
-      .post('/v1/bookings')
-      .set('Authorization', `Bearer ${prov.accessToken}`)
-      .send({ tripId: trip.id, seatsCount: 1 });
-    expect(res.status).toBe(403);
-    expect(res.body.error.details.reason).toBe('phone_required');
   });
 });
 

@@ -126,43 +126,12 @@ export const openapiDocument = {
                   language: { type: 'string', enum: ['ru', 'kg'] },
                   phoneVerified: { type: 'boolean' },
                   telegramLinked: { type: 'boolean' },
-                  providers: {
-                    type: 'array',
-                    items: { type: 'string', enum: ['telegram', 'google', 'apple', 'phone'] },
-                  },
                   termsAcceptedAt: { type: 'string', format: 'date-time', nullable: true },
                 },
               },
             },
           },
         ],
-      },
-      // v2.1 §8.2 — issued by /auth/telegram|google|apple when phone isn't
-      // bound yet; unlocks only /auth/phone/send-otp + /auth/phone/verify.
-      ProvisionalAuthResult: {
-        type: 'object',
-        properties: {
-          kind: { type: 'string', enum: ['provisional'] },
-          provisionalToken: { type: 'string' },
-          provisionalTokenExpiresIn: { type: 'integer' },
-          requiresPhoneVerification: { type: 'boolean', enum: [true] },
-          hintPhone: { type: 'string', nullable: true },
-          hintName: { type: 'string', nullable: true },
-          user: {
-            type: 'object',
-            properties: {
-              id: { type: 'string', format: 'uuid' },
-              provider: { type: 'string', enum: ['telegram', 'google', 'apple', 'phone'] },
-            },
-          },
-        },
-      },
-      AnyAuthResult: {
-        oneOf: [
-          { $ref: '#/components/schemas/AuthResult' },
-          { $ref: '#/components/schemas/ProvisionalAuthResult' },
-        ],
-        discriminator: { propertyName: 'kind' },
       },
       PublicUser: {
         type: 'object',
@@ -477,92 +446,13 @@ export const openapiDocument = {
     },
 
     // ─── Auth ────────────────────────────────────────────────────────
-    '/auth/telegram': {
-      post: {
-        tags: ['Auth'],
-        summary: 'Login via Telegram Mini App initData (may return provisional)',
-        description:
-          'Returns AuthResult when the user already has a verified phone. '
-          + 'Returns ProvisionalAuthResult on first login — client must then '
-          + 'call /auth/phone/send-otp + /auth/phone/verify (Bearer: provisional) to complete.',
-        security: [],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['initData'],
-                properties: { initData: { type: 'string' } },
-              },
-            },
-          },
-        },
-        responses: {
-          '200': { description: 'OK', content: jsonOk('AnyAuthResult') },
-          ...errorResponses,
-        },
-      },
-    },
-    // ─── v2.1 OAuth providers ──────────────────────────────────────
-    '/auth/google': {
-      post: {
-        tags: ['Auth'],
-        summary: 'Login via Google id_token (may return provisional)',
-        description:
-          'Server verifies id_token against Google JWKS + GOOGLE_CLIENT_IDS '
-          + 'audience allowlist. First-time Google users receive ProvisionalAuthResult '
-          + 'until they complete SMS phone verification (§8.3 v2.1).',
-        security: [],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['idToken'],
-                properties: { idToken: { type: 'string' } },
-              },
-            },
-          },
-        },
-        responses: {
-          '200': { description: 'OK', content: jsonOk('AnyAuthResult') },
-          ...errorResponses,
-        },
-      },
-    },
-    '/auth/apple': {
-      post: {
-        tags: ['Auth'],
-        summary: 'Login via Apple identity_token (may return provisional)',
-        description: 'Same semantics as /auth/google — server verifies via Apple JWKS.',
-        security: [],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['identityToken'],
-                properties: { identityToken: { type: 'string' } },
-              },
-            },
-          },
-        },
-        responses: {
-          '200': { description: 'OK', content: jsonOk('AnyAuthResult') },
-          ...errorResponses,
-        },
-      },
-    },
     '/auth/phone/login': {
       post: {
         tags: ['Auth'],
-        summary: 'Repeat login: phone + password (no OTP)',
+        summary: 'Web sign-in: phone + password (no WhatsApp code)',
         description:
-          'For users who already verified phone and set a password. '
-          + 'v2.1 §8.4 — no SMS on repeat login.',
+          'Accounts created on mobile / in the Telegram bot have no password until '
+          + 'they set one via /auth/phone/reset-password.',
         security: [],
         requestBody: {
           required: true,
@@ -588,7 +478,7 @@ export const openapiDocument = {
     '/auth/phone/send-otp': {
       post: {
         tags: ['Auth'],
-        summary: 'Send OTP to +996XXXXXXXXX',
+        summary: 'Send a WhatsApp code (registration, mobile login, password reset)',
         security: [],
         requestBody: {
           required: true,
@@ -618,11 +508,8 @@ export const openapiDocument = {
     '/auth/phone/verify': {
       post: {
         tags: ['Auth'],
-        summary: 'Verify OTP — binds phone to provisional user if Bearer is set',
-        description:
-          'Two modes: (a) no Bearer → find-or-create user by phone. '
-          + '(b) Bearer: provisional-token → bind this phone to the user '
-          + 'that OAuth created, preserving one-account rule.',
+        summary: 'Mobile sign-in: phone + WhatsApp code',
+        description: 'Existing accounts only — an unknown phone is 404, register it via /auth/register.',
         security: [],
         requestBody: {
           required: true,
@@ -645,6 +532,87 @@ export const openapiDocument = {
           '200': { description: 'OK', content: jsonOk('AuthResult') },
           ...errorResponses,
         },
+      },
+    },
+    '/auth/check-phone': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Which sign-in step comes next for a phone',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { type: 'object', required: ['phone'], properties: { phone: { type: 'string' } } },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'exists=false → register; hasPassword=false → set a password via WhatsApp (web)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { exists: { type: 'boolean' }, hasPassword: { type: 'boolean' } },
+                },
+              },
+            },
+          },
+          ...errorResponses,
+        },
+      },
+    },
+    '/auth/register': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Register a new number: WhatsApp code + name (+ password on web)',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['phone', 'code', 'name', 'surname'],
+                properties: {
+                  phone: { type: 'string' },
+                  code: { type: 'string', pattern: '^\\d{6}$' },
+                  name: { type: 'string', maxLength: 100 },
+                  surname: { type: 'string', maxLength: 100 },
+                  password: { type: 'string', minLength: 8, description: 'web only; must contain a digit' },
+                  channel: { type: 'string', enum: ['mobile', 'web'] },
+                },
+              },
+            },
+          },
+        },
+        responses: { '201': { description: 'Created', content: jsonOk('AuthResult') }, ...errorResponses },
+      },
+    },
+    '/auth/phone/reset-password': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Forgot password / first password — WhatsApp code to the account number',
+        description: 'Revokes every session of the account.',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['phone', 'code', 'newPassword'],
+                properties: {
+                  phone: { type: 'string' },
+                  code: { type: 'string', pattern: '^\\d{6}$' },
+                  newPassword: { type: 'string', minLength: 8, description: 'must contain a digit' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '204': { description: 'Password set' }, ...errorResponses },
       },
     },
     '/auth/refresh': {
@@ -771,10 +739,9 @@ export const openapiDocument = {
     '/users/me/password': {
       patch: {
         tags: ['Users'],
-        summary: 'Set password (first time) or change it (current required)',
+        summary: 'Change the password (current one required)',
         description:
-          'Without an existing password — pass only newPassword. '
-          + 'With an existing password — currentPassword is required. '
+          'No password yet → 409 password_not_set: use /auth/phone/reset-password. '
           + 'New password must be ≥8 chars and contain a digit.',
         requestBody: {
           required: true,
@@ -782,7 +749,7 @@ export const openapiDocument = {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['newPassword'],
+                required: ['currentPassword', 'newPassword'],
                 properties: {
                   currentPassword: { type: 'string' },
                   newPassword: {
@@ -802,56 +769,19 @@ export const openapiDocument = {
     '/users/me/phone': {
       patch: {
         tags: ['Users'],
-        summary: 'Start phone-change flow — OTP to NEW number',
+        summary: 'Start phone change — WhatsApp code to the NEW number',
         description:
-          'v2.1 §8.7 — requires current-provider re-auth. Returns '
-          + '{ expiresInSec: 600 }. Finish with PATCH /users/me/phone/confirm.',
+          'The session authenticates the caller. Returns { expiresInSec: 600 }. '
+          + 'Finish with PATCH /users/me/phone/confirm.',
         requestBody: {
           required: true,
           content: {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['newPhone', 'reAuthProof'],
+                required: ['newPhone'],
                 properties: {
                   newPhone: { type: 'string', example: '+996700111333' },
-                  reAuthProof: {
-                    oneOf: [
-                      {
-                        type: 'object',
-                        required: ['provider', 'initData'],
-                        properties: {
-                          provider: { type: 'string', enum: ['telegram'] },
-                          initData: { type: 'string' },
-                        },
-                      },
-                      {
-                        type: 'object',
-                        required: ['provider', 'idToken'],
-                        properties: {
-                          provider: { type: 'string', enum: ['google'] },
-                          idToken: { type: 'string' },
-                        },
-                      },
-                      {
-                        type: 'object',
-                        required: ['provider', 'identityToken'],
-                        properties: {
-                          provider: { type: 'string', enum: ['apple'] },
-                          identityToken: { type: 'string' },
-                        },
-                      },
-                      {
-                        type: 'object',
-                        required: ['provider', 'password'],
-                        properties: {
-                          provider: { type: 'string', enum: ['phone'] },
-                          password: { type: 'string' },
-                        },
-                      },
-                    ],
-                    discriminator: { propertyName: 'provider' },
-                  },
                 },
               },
             },
@@ -899,79 +829,6 @@ export const openapiDocument = {
           },
           ...errorResponses,
         },
-      },
-    },
-    '/users/me/providers': {
-      post: {
-        tags: ['Users'],
-        summary: 'Link an additional OAuth provider to this account',
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    required: ['provider', 'initData'],
-                    properties: {
-                      provider: { type: 'string', enum: ['telegram'] },
-                      initData: { type: 'string' },
-                    },
-                  },
-                  {
-                    type: 'object',
-                    required: ['provider', 'idToken'],
-                    properties: {
-                      provider: { type: 'string', enum: ['google'] },
-                      idToken: { type: 'string' },
-                    },
-                  },
-                  {
-                    type: 'object',
-                    required: ['provider', 'identityToken'],
-                    properties: {
-                      provider: { type: 'string', enum: ['apple'] },
-                      identityToken: { type: 'string' },
-                    },
-                  },
-                ],
-                discriminator: { propertyName: 'provider' },
-              },
-            },
-          },
-        },
-        responses: {
-          '201': {
-            description: 'Linked',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    provider: { type: 'string', enum: ['telegram', 'google', 'apple'] },
-                  },
-                },
-              },
-            },
-          },
-          ...errorResponses,
-        },
-      },
-    },
-    '/users/me/providers/{provider}': {
-      delete: {
-        tags: ['Users'],
-        summary: 'Unlink a provider (rejects removing the last one)',
-        parameters: [
-          {
-            name: 'provider',
-            in: 'path',
-            required: true,
-            schema: { type: 'string', enum: ['telegram', 'google', 'apple', 'phone'] },
-          },
-        ],
-        responses: { '204': { description: 'Unlinked' }, ...errorResponses },
       },
     },
     '/users/avatar': {

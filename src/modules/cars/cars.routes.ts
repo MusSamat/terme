@@ -5,7 +5,7 @@ import { createCarCatalogService, type CarCatalogService } from './carCatalog.se
 import { CarCreateBody, CarIdParam } from './cars.schemas.js';
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
-import { requireAuth, requirePhone } from '@/middleware/auth.js';
+import { requireAuth } from '@/middleware/auth.js';
 
 export function createCarsRouter(prisma: PrismaClient, catalog?: CarCatalogService): Router {
   const router = Router();
@@ -47,7 +47,6 @@ export function createCarsRouter(prisma: PrismaClient, catalog?: CarCatalogServi
   router.post(
     '/',
     requireAuth,
-    requirePhone,
     validate({ body: CarCreateBody }),
     asyncHandler(async (req, res) => {
       const car = await service.create(req.user!.id, req.body as Parameters<typeof service.create>[1]);

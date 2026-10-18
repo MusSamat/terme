@@ -38,6 +38,8 @@ model User {
   language         String    @default("ru") @db.VarChar(2)
   isBlocked        Boolean   @default(false) @map("is_blocked")
   blockedReason    String?   @map("blocked_reason")
+  // Web sign-in only; mobile signs in by WhatsApp code. NULL = no password yet
+  // (set it via the WhatsApp «forgot password» flow).
   passwordHash     String?   @map("password_hash") @db.VarChar(100)
   lastPasswordChangedAt DateTime? @map("last_password_changed_at") @db.Timestamptz(6)
   termsAcceptedAt  DateTime? @map("terms_accepted_at") @db.Timestamptz(6)
@@ -45,7 +47,7 @@ model User {
   loyaltyPoints    Int       @default(0) @map("loyalty_points")
   loyaltyTier      String    @default("novice") @map("loyalty_tier") @db.VarChar(20)
   lastSeenAt       DateTime? @map("last_seen_at") @db.Timestamptz(6)
-  lastPlatform     String?   @map("last_platform") @db.VarChar(10) // web | mini | mobile — last presence ping origin
+  lastPlatform     String?   @map("last_platform") @db.VarChar(10) // web | mobile — last presence ping origin
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
@@ -57,7 +59,6 @@ model User {
   ratingsGiven        Rating[]        @relation("RatingRater")
   ratingsReceived     Rating[]        @relation("RatingRatee")
   refreshTokens       RefreshToken[]
-  authProviders       AuthProvider[]
   notifications       Notification[]
   cars                Car[]
   complaintsReported  Complaint[]          @relation("ComplaintReporter")
@@ -335,26 +336,6 @@ model RefreshToken {
   @@index([userId])
   @@index([expiresAt])
   @@map("refresh_tokens")
-}
-
-// ─── Auth providers (v2.1) ───────────────────────────────────────────
-// One user can link multiple OAuth providers + phone + telegram. Keeping a
-// separate table (vs. column-per-provider) lets us add new providers without
-// schema changes and enforces "one provider-account per one platform account"
-// via the composite UNIQUE below.
-model AuthProvider {
-  id             String   @id @default(uuid()) @db.Uuid
-  userId         String   @map("user_id") @db.Uuid
-  provider       String   @db.VarChar(20)
-  providerUserId String   @map("provider_user_id") @db.VarChar(200)
-  providerData   Json     @default("{}") @map("provider_data")
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([provider, providerUserId])
-  @@index([userId])
-  @@map("auth_providers")
 }
 
 // ─── Cities / administrative divisions (KG directory) ─────────────────
@@ -648,44 +629,6 @@ model ListingView {
   @@unique([targetType, targetId, viewerKey])
   @@index([targetType, targetId])
   @@map("listing_views")
-}
-
-// ─── Telegram registration link tokens ───────────────────────────────
-// Ties a web registration session to a Telegram chat so OTP can be
-// delivered via bot instead of SMS. TTL = 10 minutes.
-// status: waiting (bot not yet opened) | sent (OTP delivered) | expired
-model TelegramLinkToken {
-  id         String    @id @default(uuid()) @db.Uuid
-  token      String    @unique @db.VarChar(36)
-  phone      String    @db.VarChar(20)
-  telegramId BigInt?   @map("telegram_id")
-  status     String    @default("waiting") @db.VarChar(10)
-  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-
-  @@index([expiresAt])
-  @@map("telegram_link_tokens")
-}
-
-
-// ─── Telegram bot login tokens ────────────────────────────────────────
-// Browser clicks "Login with Telegram" → bot receives deep-link →
-// identifies user by telegramId → marks token done → browser polls + claims.
-// status: waiting | done (userId set) | used
-model TelegramBotLoginToken {
-  id        String   @id @default(uuid()) @db.Uuid
-  token     String   @unique @db.VarChar(36)
-  status    String   @default("waiting") @db.VarChar(10)
-  userId    String?  @map("user_id") @db.Uuid
-  // Set when a NEW Telegram account pressed Start and we're waiting for it to
-  // share its phone via the bot's request_contact button (free registration).
-  telegramId BigInt? @map("telegram_id")
-  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-
-  @@index([expiresAt])
-  @@index([telegramId])
-  @@map("telegram_bot_login_tokens")
 }
 
 // ─── WhatsApp inbox (Cloud API) ───────────────────────────────────────

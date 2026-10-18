@@ -1,110 +1,111 @@
 import { Router } from 'express';
 import type { PrismaClient } from '@prisma/client';
-import { z } from 'zod';
 import { createAuthService } from './auth.service.js';
-import type { TelegramSender } from './auth.otp.js';
 import {
   AdminChangePasswordBody,
   AdminLoginBody,
   AdminRefreshBody,
-  AppleLoginBody,
   CheckPhoneBody,
-  GoogleLoginBody,
-  KgPhoneSchema,
   LogoutBody,
   PhoneLoginBody,
+  ResetPasswordBody,
   RefreshBody,
   RegisterBody,
   SendOtpBody,
-  TelegramLoginBody,
   VerifyOtpBody,
 } from './auth.schemas.js';
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
-import { requireAdmin } from '@/middleware/auth.js';
-import { requireAuth, optionalAuth } from '@/middleware/auth.js';
+import { requireAdmin, requireAuth } from '@/middleware/auth.js';
 import {
   adminLoginLimit,
+  authLimit,
   sendOtpDailyLimit,
   sendOtpMinuteLimit,
-  telegramAuthLimit,
   verifyOtpLimit,
 } from '@/middleware/rateLimit.js';
-import { verifyAccessOrProvisional } from '@/lib/jwt.js';
 import type { Notifier } from '@/lib/notifier.js';
 import { Errors } from '@/lib/errors.js';
 import { REFRESH_COOKIE, clearRefreshCookie, readCookie, webRefreshCookie } from '@/lib/cookies.js';
 
-export function createAuthRouter(
-  prisma: PrismaClient,
-  notifier: Notifier,
-  bot: TelegramSender | null = null,
-): Router {
+// Sign-in flows (phone first, then POST /check-phone decides the next step):
+//   new number      → /phone/send-otp → /register (code + name [+ password on web])
+//   mobile login    → /phone/send-otp → /phone/verify
+//   web login       → /phone/login (password)
+//   forgot password → /phone/send-otp → /phone/reset-password
+export function createAuthRouter(prisma: PrismaClient, notifier: Notifier): Router {
   const router = Router();
-  const service = createAuthService(prisma, notifier, bot);
+  const service = createAuthService(prisma, notifier);
 
   // For channel='web', deliver the refresh token via an HttpOnly cookie and
-  // strip it from the JSON body (TZ §5/§26.1). Mobile is untouched.
+  // strip it from the JSON body. Mobile is untouched.
   router.use(webRefreshCookie());
 
-  // ─── OAuth / Telegram logins ──────────────────────────────────────
   router.post(
-    '/telegram',
-    telegramAuthLimit,
-    validate({ body: TelegramLoginBody }),
+    '/check-phone',
+    authLimit,
+    validate({ body: CheckPhoneBody }),
     asyncHandler(async (req, res) => {
-      const { initData } = req.body as { initData: string };
-      const result = await service.loginWithTelegram(
-        initData,
-        req.header('user-agent')?.slice(0, 300),
-      );
-      res.status(200).json(result);
+      const { phone } = req.body as { phone: string };
+      res.status(200).json(await service.checkPhone(phone));
     }),
   );
 
   router.post(
-    '/google',
-    telegramAuthLimit, // same 10/min/IP cap per TZ §7.6
-    validate({ body: GoogleLoginBody }),
+    '/phone/send-otp',
+    sendOtpMinuteLimit,
+    sendOtpDailyLimit,
+    validate({ body: SendOtpBody }),
     asyncHandler(async (req, res) => {
-      const result = await service.loginWithGoogle(
-        req.body as { idToken: string },
-        req.header('user-agent')?.slice(0, 300),
-      );
-      res.status(200).json(result);
+      const { phone } = req.body as { phone: string };
+      res.status(200).json(await service.sendOtp(phone));
     }),
   );
 
   router.post(
-    '/apple',
-    telegramAuthLimit,
-    validate({ body: AppleLoginBody }),
+    '/phone/verify',
+    verifyOtpLimit,
+    validate({ body: VerifyOtpBody }),
     asyncHandler(async (req, res) => {
-      const result = await service.loginWithApple(
-        req.body as { identityToken: string },
-        req.header('user-agent')?.slice(0, 300),
-      );
-      res.status(200).json(result);
+      const { phone, code, deviceInfo } = req.body as {
+        phone: string;
+        code: string;
+        deviceInfo?: string;
+      };
+      const ua = req.header('user-agent')?.slice(0, 300);
+      res.status(200).json(await service.verifyOtp(phone, code, deviceInfo ?? ua));
     }),
   );
 
   router.post(
     '/phone/login',
-    telegramAuthLimit,
+    authLimit,
     validate({ body: PhoneLoginBody }),
     asyncHandler(async (req, res) => {
-      const result = await service.loginWithPhonePassword(
-        req.body as { phone: string; password: string },
-        req.header('user-agent')?.slice(0, 300),
-      );
-      res.status(200).json(result);
+      const { phone, password } = req.body as { phone: string; password: string };
+      const ua = req.header('user-agent')?.slice(0, 300);
+      res.status(200).json(await service.loginWithPassword(phone, password, ua));
     }),
   );
 
-  // ─── Classical registration (phone + Telegram OTP + profile + password) ──
+  router.post(
+    '/phone/reset-password',
+    verifyOtpLimit,
+    validate({ body: ResetPasswordBody }),
+    asyncHandler(async (req, res) => {
+      const { phone, code, newPassword } = req.body as {
+        phone: string;
+        code: string;
+        newPassword: string;
+      };
+      await service.resetPassword(phone, code, newPassword);
+      res.status(204).send();
+    }),
+  );
+
   router.post(
     '/register',
-    telegramAuthLimit,
+    authLimit,
     validate({ body: RegisterBody }),
     asyncHandler(async (req, res) => {
       const { phone, code, name, surname, password } = req.body as {
@@ -123,55 +124,6 @@ export function createAuthRouter(
         req.header('user-agent')?.slice(0, 300),
       );
       res.status(201).json(result);
-    }),
-  );
-
-  // ─── Phone verification (accepts provisional or unauth) ───────────
-  router.post(
-    '/phone/send-otp',
-    sendOtpMinuteLimit,
-    sendOtpDailyLimit,
-    validate({ body: SendOtpBody }),
-    asyncHandler(async (req, res) => {
-      const { phone } = req.body as { phone: string };
-      const result = await service.sendOtp(phone);
-      res.status(200).json(result);
-    }),
-  );
-
-  router.post(
-    '/phone/verify',
-    verifyOtpLimit,
-    validate({ body: VerifyOtpBody }),
-    asyncHandler(async (req, res) => {
-      const { phone, code, deviceInfo } = req.body as {
-        phone: string;
-        code: string;
-        deviceInfo?: string;
-      };
-      const ua = req.header('user-agent')?.slice(0, 300);
-
-      // If caller holds a provisional token, bind phone to THAT user.
-      // Otherwise, /verify is the phone-only registration path (find-or-create).
-      const auth = req.header('authorization');
-      let provisionalUserId: string | null = null;
-      let provider: 'phone' | 'telegram' | 'google' | 'apple' = 'phone';
-      if (auth?.startsWith('Bearer ')) {
-        const res = verifyAccessOrProvisional(auth.slice(7));
-        if (res.kind === 'provisional') {
-          provisionalUserId = res.decoded.sub;
-          provider = res.decoded.provider;
-        }
-      }
-
-      const result = await service.verifyOtp(
-        phone,
-        code,
-        provisionalUserId,
-        provider,
-        deviceInfo ?? ua,
-      );
-      res.status(200).json(result);
     }),
   );
 
@@ -213,125 +165,6 @@ export function createAuthRouter(
     }),
   );
 
-  // ─── Check phone existence + capabilities ────────────────────────────
-  router.post(
-    '/check-phone',
-    telegramAuthLimit,
-    validate({ body: CheckPhoneBody }),
-    asyncHandler(async (req, res) => {
-      const { phone } = req.body as { phone: string };
-      res.status(200).json(await service.checkPhone(phone));
-    }),
-  );
-
-  // ─── Telegram registration link (RETIRED — C1) ──────────────────────
-  // This deep-link flow used to deliver the OTP to the requester's OWN Telegram
-  // chat for an arbitrary phone → account takeover. OTP is now WhatsApp-only, so
-  // the init/status endpoints are retired. Clients must use /auth/phone/send-otp
-  // (WhatsApp) or the request_contact registration flow instead. Kept as 410 so
-  // stale clients get a clear signal rather than a silent dead deep-link.
-  router.post(
-    '/telegram/link/init',
-    asyncHandler(async (_req, _res) => {
-      throw Errors.serviceUnavailable('telegram_link_flow_retired');
-    }),
-  );
-
-  router.get(
-    '/telegram/link/status',
-    asyncHandler(async (_req, _res) => {
-      throw Errors.serviceUnavailable('telegram_link_flow_retired');
-    }),
-  );
-
-  // ─── Telegram bot magic-link login ───────────────────────────────────
-  router.post(
-    '/telegram/bot-login/init',
-    telegramAuthLimit,
-    asyncHandler(async (_req, res) => {
-      res.status(200).json(await service.initBotLogin());
-    }),
-  );
-
-  router.get(
-    '/telegram/bot-login/status',
-    validate({ query: z.object({ token: z.string().min(1).max(100) }) }),
-    asyncHandler(async (req, res) => {
-      const { token } = req.query as { token: string };
-      res.status(200).json(await service.getBotLoginStatus(token));
-    }),
-  );
-
-  router.post(
-    '/telegram/bot-login/claim',
-    telegramAuthLimit,
-    validate({ body: z.object({ token: z.string().min(1).max(100) }) }),
-    asyncHandler(async (req, res) => {
-      const { token } = req.body as { token: string };
-      const deviceInfo = req.headers['user-agent'];
-      res.status(200).json(await service.claimBotLogin(token, deviceInfo));
-    }),
-  );
-
-  // ─── Telegram Bot OTP (login without password / forgot password) ─────
-  router.post(
-    '/telegram/otp/send',
-    sendOtpMinuteLimit,
-    sendOtpDailyLimit,
-    validate({ body: SendOtpBody }),
-    asyncHandler(async (req, res) => {
-      const { phone } = req.body as { phone: string };
-      res.status(200).json(await service.sendTelegramOtp(phone));
-    }),
-  );
-
-  // ─── Password reset (forgot-password / post-OTP flow) ─
-  // M2: authorised by a FRESH OTP proof (phone + code) — the same possession
-  // check that OTP login itself relies on, so this is deliberately usable
-  // WITHOUT a session (the forgot-password caller can't log in by definition).
-  // When a session IS present, the phone must be the caller's own number.
-  // The code is consumed single-use (≤10 min freshness, attempt caps) and all
-  // other sessions are revoked on success.
-  router.post(
-    '/phone/reset-password',
-    optionalAuth,
-    verifyOtpLimit,
-    validate({
-      body: z.object({
-        phone: KgPhoneSchema,
-        code: z.string().min(4).max(8),
-        newPassword: z.string().min(6).max(128),
-      }),
-    }),
-    asyncHandler(async (req, res) => {
-      const { phone, code, newPassword } = req.body as {
-        phone: string;
-        code: string;
-        newPassword: string;
-      };
-      // Logged-in caller → their own account; anonymous (forgot password) →
-      // resolve the account by phone. Non-existent phone gets the same 401 as
-      // a wrong code (no account enumeration beyond /check-phone).
-      let userId = req.user?.id;
-      if (!userId) {
-        const owner = await prisma.user.findUnique({ where: { phone } });
-        if (!owner || owner.deletedAt) throw Errors.unauthorized({ reason: 'otp_wrong' });
-        userId = owner.id;
-      }
-      // resetPassword's phone/code proof params are optional in the AuthService
-      // interface (kept 2-arg-assignable), so widen the type here to pass them.
-      await (
-        service.resetPassword as (
-          userId: string,
-          newPassword: string,
-          phone?: string,
-          code?: string,
-        ) => Promise<void>
-      )(userId, newPassword, phone, code);
-      res.status(204).send();
-    }),
-  );
-
   // ─── Admin ─────────────────────────────────────────────────────────
   router.post(
     '/admin/login',
@@ -343,8 +176,7 @@ export function createAuthRouter(
         password: string;
         totp?: string;
       };
-      const result = await service.adminLogin(email, password, totp);
-      res.status(200).json(result);
+      res.status(200).json(await service.adminLogin(email, password, totp));
     }),
   );
 
@@ -374,10 +206,5 @@ export function createAuthRouter(
     }),
   );
 
-  // Export the shared service factory so sibling modules (e.g. users) can
-  // reach the password / phone / provider flows without duplicating wiring.
-  (router as unknown as { _authService?: ReturnType<typeof createAuthService> })._authService =
-    service;
-  void Errors; // keep import for asyncHandler guards used elsewhere
   return router;
 }

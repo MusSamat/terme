@@ -31,8 +31,7 @@
     "db:seed:requests": "tsx prisma/seedPopularRequests.ts",
     "db:seed:sights": "tsx prisma/seedPopularSights.ts",
     "dev:token": "tsx scripts/devToken.ts",
-    "db:seed:cities": "tsx scripts/seed-cities.ts",
-    "db:dedup-accounts": "tsx scripts/dedup-accounts.ts"
+    "db:seed:cities": "tsx scripts/seed-cities.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -46,17 +45,13 @@
     "express-rate-limit": "^7.4.1",
     "grammy": "^1.30.0",
     "helmet": "^8.0.0",
-    "jose": "^5.9.6",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.1",
     "node-cron": "^3.0.3",
     "otplib": "^12.0.1",
     "pino": "^9.5.0",
-    "pino-http": "^10.3.0",
     "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1",
     "swagger-ui-express": "^5.0.1",
-    "uuid": "^11.0.3",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -80,6 +75,7 @@
     "pino-pretty": "^11.3.0",
     "prettier": "^3.3.3",
     "prisma": "^5.22.0",
+    "socket.io-client": "^4.8.4",
     "supertest": "^7.0.0",
     "tsc-alias": "^1.8.10",
     "tsx": "^4.19.2",

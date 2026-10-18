@@ -88,21 +88,6 @@ async function seedUsers(): Promise<Map<string, string>> {
       },
     });
     idByPhone.set(p.phone, user.id);
-
-    // auth_providers: always a phone row; optionally telegram
-    await prisma.authProvider.create({
-      data: { userId: user.id, provider: 'phone', providerUserId: p.phone },
-    });
-    if (p.telegramId) {
-      await prisma.authProvider.create({
-        data: {
-          userId: user.id,
-          provider: 'telegram',
-          providerUserId: String(p.telegramId),
-          providerData: { first_name: p.name.split(' ')[0] },
-        },
-      });
-    }
   }
   console.warn(`[demo] ${PERSONAS.length} users created`);
   return idByPhone;

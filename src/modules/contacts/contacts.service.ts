@@ -51,7 +51,7 @@ export function createContactsService(prisma: PrismaClient) {
     if (trip.driverId === viewerId) throw Errors.validation({ reason: 'own_trip' });
     if (trip.status !== 'active') throw Errors.tripNotActive();
 
-    // Telegram-only accounts carry a "+tg:<id>" placeholder — never leak it.
+    // Soft-deleted accounts carry a "+del:" tombstone — never leak it.
     const phone = publicPhone(trip.driver.phone);
     if (!phone) throw Errors.conflict('User has no public phone', { reason: 'no_phone' });
 

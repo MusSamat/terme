@@ -40,9 +40,7 @@ export async function createUser(
   const accessToken = signAccessToken({
     sub: user.id,
     phone: user.phone,
-    roles: user.roles as ('passenger' | 'driver' | 'both' | 'admin' | 'superadmin')[],
-    telegram_id: user.telegramId ? user.telegramId.toString() : null,
-    provider: 'phone',
+    roles: user.roles as ('passenger' | 'driver' | 'admin' | 'superadmin')[],
   });
   const ttl = refreshTtlSeconds();
   const tokenId = generateUuid();

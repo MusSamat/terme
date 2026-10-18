@@ -29,7 +29,6 @@ import { createPassengerRequestsRouter } from '@/modules/passenger-requests/pass
 import { createPresenceRouter } from '@/modules/presence/presence.routes.js';
 import { createWhatsappRouter } from '@/modules/whatsapp/whatsapp.routes.js';
 import { NoopNotifier, type Notifier } from '@/lib/notifier.js';
-import type { TelegramSender } from '@/modules/auth/auth.otp.js';
 import { openapiDocument } from '@/openapi.js';
 
 /**
@@ -37,11 +36,7 @@ import { openapiDocument } from '@/openapi.js';
  * each test can spin up its own app without port binding (Supertest attaches
  * directly to the handler).
  */
-export function createApp(
-  prisma: PrismaClient,
-  notifier: Notifier = new NoopNotifier(),
-  bot: TelegramSender | null = null,
-): Express {
+export function createApp(prisma: PrismaClient, notifier: Notifier = new NoopNotifier()): Express {
   const app = express();
 
   // Behind Nginx — trust X-Forwarded-For so rate-limit and logs see the real IP.
@@ -52,7 +47,7 @@ export function createApp(
 
   app.use(
     cors({
-      // Allowlist (incl. MINI_APP_URL) is shared with Socket.IO — see lib/cors.
+      // Allowlist is shared with Socket.IO — see lib/cors.
       // Disallowed origin → cb(null, false): cors simply omits the ACAO
       // headers and the BROWSER blocks the call with a clear CORS message.
       // cb(new Error(...)) here used to bubble into the error handler as a
@@ -84,8 +79,8 @@ export function createApp(
 
   // Versioned API surface.
   const v1 = express.Router();
-  v1.use('/auth', createAuthRouter(prisma, notifier, bot));
-  v1.use('/users', createUsersRouter(prisma, notifier, bot));
+  v1.use('/auth', createAuthRouter(prisma, notifier));
+  v1.use('/users', createUsersRouter(prisma, notifier));
   v1.use('/cities', createCitiesRouter(prisma));
   v1.use('/drivers', createDriversRouter(prisma));
   const carCatalog = createCarCatalogService(prisma);

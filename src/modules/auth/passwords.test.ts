@@ -5,18 +5,20 @@ import type { Express } from 'express';
 import { testPrisma } from '../../../tests/setup.js';
 import { createApp } from '@/server.js';
 import { createUser } from '../../../tests/factories.js';
-import { NoopNotifier } from '@/lib/notifier.js';
 
-// Change-password (POST /v1/users/me/password) and forgot/reset-password
-// (POST /v1/auth/phone/reset-password). Both flows end with a real login
-// round-trip so the test proves the new password actually works and the old
-// one stops working — the invariant that matters to users.
+// Web sign-in is phone + password; «forgot password» (and a first password for
+// accounts created on mobile / in the bot) goes through a WhatsApp code.
 
 let app: Express;
-
 beforeEach(() => {
-  app = createApp(testPrisma, new NoopNotifier());
+  app = createApp(testPrisma);
 });
+
+async function userWithPassword(phone: string, pw: string) {
+  const u = await createUser(testPrisma, { phone });
+  await testPrisma.user.update({ where: { id: u.id }, data: { passwordHash: await bcrypt.hash(pw, 4) } });
+  return u;
+}
 
 async function seedOtp(phone: string, code: string): Promise<void> {
   await testPrisma.otpCode.create({
@@ -24,132 +26,119 @@ async function seedOtp(phone: string, code: string): Promise<void> {
   });
 }
 
-/** Register a phone+password account and return its token + credentials. */
-async function registerUser(phone: string, password: string) {
-  await seedOtp(phone, '123456');
-  const res = await request(app)
-    .post('/v1/auth/register')
-    .send({ phone, code: '123456', name: 'Тест', surname: 'Юзер', password });
-  expect(res.status).toBe(201);
-  return { token: res.body.accessToken as string, userId: res.body.user.id as string };
-}
-
 const login = (phone: string, password: string) =>
-  request(app).post('/v1/auth/phone/login').send({ phone, password });
+  request(app).post('/v1/auth/phone/login').send({ phone, password, channel: 'web' });
 
-describe('POST /v1/users/me/password — change password', () => {
-  const PHONE = '+996700200001';
-
-  it('changes the password with the correct current one; new works, old fails', async () => {
-    const { token } = await registerUser(PHONE, 'oldpass123');
-
-    const res = await request(app)
-      .patch('/v1/users/me/password')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ currentPassword: 'oldpass123', newPassword: 'newpass456' });
-    expect(res.status).toBe(204);
-
-    expect((await login(PHONE, 'newpass456')).status).toBe(200);
-    expect((await login(PHONE, 'oldpass123')).status).toBeGreaterThanOrEqual(400);
+describe('POST /v1/auth/phone/login (web)', () => {
+  it('logs in with the right password, no WhatsApp code needed', async () => {
+    await userWithPassword('+996700100100', 'secret123');
+    const res = await login('+996700100100', 'secret123');
+    expect(res.status).toBe(200);
+    expect(res.body.accessToken).toBeTypeOf('string');
+    expect(await testPrisma.otpCode.count()).toBe(0);
   });
 
-  it('rejects a wrong current password (401 current_password_mismatch)', async () => {
-    const { token } = await registerUser(PHONE, 'oldpass123');
-    const res = await request(app)
-      .patch('/v1/users/me/password')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ currentPassword: 'WRONG', newPassword: 'newpass456' });
-    expect(res.status).toBe(401);
-    expect(res.body.error.details.reason).toBe('current_password_mismatch');
-    // Password unchanged — the original still logs in.
-    expect((await login(PHONE, 'oldpass123')).status).toBe(200);
+  it('rejects a wrong password, an unknown phone and a passwordless account alike (401)', async () => {
+    await userWithPassword('+996700100101', 'secret123');
+    await createUser(testPrisma, { phone: '+996700100102' });
+    for (const [phone, pw] of [
+      ['+996700100101', 'wrong-pass1'],
+      ['+996700100199', 'secret123'],
+      ['+996700100102', 'secret123'],
+    ] as const) {
+      const res = await login(phone, pw);
+      expect(res.status).toBe(401);
+    }
   });
 
-  it('requires the current password when one is already set (401)', async () => {
-    const { token } = await registerUser(PHONE, 'oldpass123');
-    const res = await request(app)
-      .patch('/v1/users/me/password')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ newPassword: 'newpass456' });
-    expect(res.status).toBe(401);
-    expect(res.body.error.details.reason).toBe('current_password_required');
-  });
-
-  it('first-time set: a passwordless (Telegram) user sets one without a current password', async () => {
-    const u = await createUser(testPrisma, { phone: PHONE }); // no passwordHash
-    const res = await request(app)
-      .patch('/v1/users/me/password')
-      .set('Authorization', `Bearer ${u.accessToken}`)
-      .send({ newPassword: 'brandnew123' });
-    expect(res.status).toBe(204);
-
-    const row = await testPrisma.user.findUnique({ where: { id: u.id } });
-    expect(await bcrypt.compare('brandnew123', row!.passwordHash!)).toBe(true);
-  });
-
-  it('rejects a too-short new password (400 VALIDATION_ERROR)', async () => {
-    const { token } = await registerUser(PHONE, 'oldpass123');
-    const res = await request(app)
-      .patch('/v1/users/me/password')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ currentPassword: 'oldpass123', newPassword: 'short' });
-    expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe('VALIDATION_ERROR');
-  });
-
-  it('requires authentication (401 without a token)', async () => {
-    const res = await request(app).patch('/v1/users/me/password').send({ newPassword: 'whatever12' });
-    expect(res.status).toBe(401);
+  it('check-phone tells the web client whether a password exists', async () => {
+    await userWithPassword('+996700100103', 'secret123');
+    await createUser(testPrisma, { phone: '+996700100104' });
+    const a = await request(app).post('/v1/auth/check-phone').send({ phone: '+996700100103' });
+    const b = await request(app).post('/v1/auth/check-phone').send({ phone: '+996700100104' });
+    expect(a.body).toEqual({ exists: true, hasPassword: true });
+    expect(b.body).toEqual({ exists: true, hasPassword: false });
   });
 });
 
-describe('POST /v1/auth/phone/reset-password — forgot password (post-OTP)', () => {
-  const PHONE = '+996700200002';
-
-  it('sets a new password after a fresh OTP proof; the new one logs in', async () => {
-    // M2: reset now requires a FRESH OTP proof (phone + code) for the caller's
-    // own number, on top of the session token. Seed a valid OTP and pass it.
-    const { token } = await registerUser(PHONE, 'forgotten1');
-    await seedOtp(PHONE, '654321');
-
+describe('POST /v1/auth/phone/reset-password (WhatsApp code)', () => {
+  it('sets a new password and revokes every session', async () => {
+    const u = await userWithPassword('+996700200200', 'oldpass12');
+    await seedOtp('+996700200200', '123456');
     const res = await request(app)
       .post('/v1/auth/phone/reset-password')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ phone: PHONE, code: '654321', newPassword: 'recovered1' });
+      .send({ phone: '+996700200200', code: '123456', newPassword: 'newpass12' });
     expect(res.status).toBe(204);
-
-    expect((await login(PHONE, 'recovered1')).status).toBe(200);
-    expect((await login(PHONE, 'forgotten1')).status).toBeGreaterThanOrEqual(400);
+    expect((await login('+996700200200', 'newpass12')).status).toBe(200);
+    expect((await login('+996700200200', 'oldpass12')).status).toBe(401);
+    const old = await testPrisma.refreshToken.findFirst({ where: { userId: u.id }, orderBy: { createdAt: 'asc' } });
+    expect(old?.revokedAt).not.toBeNull();
   });
 
-  it('rejects a too-short password (400 VALIDATION_ERROR)', async () => {
-    const { token } = await registerUser(PHONE, 'forgotten1');
+  it('gives a mobile-created (passwordless) account its first password', async () => {
+    await createUser(testPrisma, { phone: '+996700200201' });
+    await seedOtp('+996700200201', '123456');
     const res = await request(app)
       .post('/v1/auth/phone/reset-password')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ newPassword: 'abc' });
+      .send({ phone: '+996700200201', code: '123456', newPassword: 'first123' });
+    expect(res.status).toBe(204);
+    expect((await login('+996700200201', 'first123')).status).toBe(200);
+  });
+
+  it('rejects a wrong code and an unknown phone the same way (400 OTP_WRONG)', async () => {
+    await userWithPassword('+996700200202', 'oldpass12');
+    await seedOtp('+996700200202', '123456');
+    const wrong = await request(app)
+      .post('/v1/auth/phone/reset-password')
+      .send({ phone: '+996700200202', code: '000000', newPassword: 'newpass12' });
+    const unknown = await request(app)
+      .post('/v1/auth/phone/reset-password')
+      .send({ phone: '+996700200299', code: '123456', newPassword: 'newpass12' });
+    expect(wrong.status).toBe(400);
+    expect(unknown.status).toBe(400);
+    expect(wrong.body.error.code).toBe('OTP_WRONG');
+    expect(unknown.body.error.code).toBe('OTP_WRONG');
+  });
+
+  it('rejects a weak password (400 VALIDATION_ERROR)', async () => {
+    const res = await request(app)
+      .post('/v1/auth/phone/reset-password')
+      .send({ phone: '+996700200203', code: '123456', newPassword: 'short' });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
+});
 
-  it('works WITHOUT a session (forgot password) given a valid OTP proof', async () => {
-    await registerUser(PHONE, 'forgotten1');
-    await seedOtp(PHONE, '111222');
-
+describe('PATCH /v1/users/me/password', () => {
+  it('changes the password with the correct current one', async () => {
+    const u = await userWithPassword('+996700300300', 'oldpass12');
     const res = await request(app)
-      .post('/v1/auth/phone/reset-password')
-      .send({ phone: PHONE, code: '111222', newPassword: 'recovered2' });
+      .patch('/v1/users/me/password')
+      .set('Authorization', `Bearer ${u.accessToken}`)
+      .send({ currentPassword: 'oldpass12', newPassword: 'newpass12' });
     expect(res.status).toBe(204);
-    expect((await login(PHONE, 'recovered2')).status).toBe(200);
+    expect((await login('+996700300300', 'newpass12')).status).toBe(200);
   });
 
-  it('rejects an anonymous reset with a wrong code (400 OTP_WRONG)', async () => {
-    await registerUser(PHONE, 'forgotten1');
+  it('rejects a wrong current password (401) and requires auth (401)', async () => {
+    const u = await userWithPassword('+996700300301', 'oldpass12');
+    const wrong = await request(app)
+      .patch('/v1/users/me/password')
+      .set('Authorization', `Bearer ${u.accessToken}`)
+      .send({ currentPassword: 'nope12345', newPassword: 'newpass12' });
+    expect(wrong.status).toBe(401);
+    const anon = await request(app)
+      .patch('/v1/users/me/password')
+      .send({ currentPassword: 'oldpass12', newPassword: 'newpass12' });
+    expect(anon.status).toBe(401);
+  });
+
+  it('a passwordless account is told to use the WhatsApp reset (409 password_not_set)', async () => {
+    const u = await createUser(testPrisma);
     const res = await request(app)
-      .post('/v1/auth/phone/reset-password')
-      .send({ phone: PHONE, code: '999999', newPassword: 'recovered3' });
-    expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe('OTP_WRONG');
-    expect((await login(PHONE, 'forgotten1')).status).toBe(200);
+      .patch('/v1/users/me/password')
+      .set('Authorization', `Bearer ${u.accessToken}`)
+      .send({ currentPassword: 'whatever1', newPassword: 'newpass12' });
+    expect(res.status).toBe(409);
   });
 });

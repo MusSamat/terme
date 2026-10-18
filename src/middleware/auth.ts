@@ -60,19 +60,6 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
 /**
  * Admin auth — separate token kind.
  */
-/**
- * Blocks provisional accounts (Telegram/OAuth silent login without a verified
- * phone — placeholder '+prov:'/'+tg:') from booking/publishing actions. They
- * may browse, but committing to a ride requires a reachable phone (TZ §8).
- */
-export const requirePhone: RequestHandler = (req, _res, next) => {
-  const phone = req.user?.phone ?? '';
-  if (!phone || phone.startsWith('+prov:') || phone.startsWith('+tg:')) {
-    return next(Errors.forbidden({ reason: 'phone_required' }));
-  }
-  next();
-};
-
 export const requireAdmin: RequestHandler = async (req, _res, next) => {
   try {
     const token = extractBearer(req.header('authorization'));

@@ -104,9 +104,8 @@ async function seed(): Promise<void> {
   const passwordHash = await bcrypt.hash('TestPass12', 4);
   const now = new Date();
 
-  // 1) Passenger pool: users + auth_providers (phone). No driver profile needed.
+  // 1) Passenger pool: users (phone). No driver profile needed.
   const userIds: string[] = [];
-  const authRows: Prisma.AuthProviderCreateManyInput[] = [];
 
   for (let i = 1; i <= PASSENGERS; i++) {
     const phone = phoneFor(i);
@@ -124,10 +123,8 @@ async function seed(): Promise<void> {
       },
     });
     userIds.push(user.id);
-    authRows.push({ userId: user.id, provider: 'phone', providerUserId: phone });
   }
-  await prisma.authProvider.createMany({ data: authRows });
-  console.warn(`[req-seed] ${userIds.length} passengers + auth providers created`);
+  console.warn(`[req-seed] ${userIds.length} passengers created`);
 
   // 2) Requests: popular route × KG-day × time slot. Past slots (today) skipped
   //    so every seeded request is future + open (visible in the feed).

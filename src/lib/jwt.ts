@@ -2,27 +2,14 @@ import jwt from 'jsonwebtoken';
 import { env } from '@/config/env.js';
 import { AppError, Errors } from '@/lib/errors.js';
 
-export type Role = 'passenger' | 'driver' | 'both' | 'admin' | 'superadmin';
-export type Provider = 'telegram' | 'google' | 'apple' | 'phone';
+export type Role = 'passenger' | 'driver' | 'admin' | 'superadmin';
 
 // ─── Payload shapes (TZ v2.1 §7.4) ─────────────────────────────────
 export interface AccessTokenPayload {
   sub: string;             // user id (UUID)
   phone: string;           // the user's verified phone
   roles: Role[];
-  telegram_id: string | null; // stringified BigInt, or null
-  provider: Provider;      // which provider was used for this login
   kind: 'access';
-}
-
-// v2.1 §8.2 step 5: provisional JWT covers the gap between OAuth/Telegram
-// success and phone-OTP completion. It grants access only to /auth/* until
-// /auth/phone/verify flips the user into a full access token.
-export interface ProvisionalTokenPayload {
-  sub: string;
-  provider: Provider;
-  requires_phone_verification: true;
-  kind: 'provisional';
 }
 
 export interface RefreshTokenPayload {
@@ -50,11 +37,6 @@ export interface DecodedAccess extends AccessTokenPayload {
   exp: number;
 }
 
-export interface DecodedProvisional extends ProvisionalTokenPayload {
-  iat: number;
-  exp: number;
-}
-
 export interface DecodedRefresh extends RefreshTokenPayload {
   iat: number;
   exp: number;
@@ -76,16 +58,6 @@ const ACCESS_TTL = (): jwt.SignOptions['expiresIn'] =>
 // ─── Signing ────────────────────────────────────────────────────────
 export function signAccessToken(payload: Omit<AccessTokenPayload, 'kind'>): string {
   return jwt.sign({ ...payload, kind: 'access' }, env.JWT_ACCESS_SECRET, {
-    algorithm: 'HS256',
-    expiresIn: ACCESS_TTL(),
-  });
-}
-
-export function signProvisionalToken(payload: Omit<ProvisionalTokenPayload, 'kind'>): string {
-  // Same short TTL as access — a provisional should never outlive the OAuth
-  // "just logged in, now give me your phone" window. If user abandons, the
-  // next OAuth round-trip issues a new one.
-  return jwt.sign({ ...payload, kind: 'provisional' }, env.JWT_ACCESS_SECRET, {
     algorithm: 'HS256',
     expiresIn: ACCESS_TTL(),
   });
@@ -136,33 +108,6 @@ export function verifyAccessToken(token: string): DecodedAccess {
     if (err instanceof AppError) throw err;
     throw mapJwtError(err);
   }
-}
-
-export function verifyProvisionalToken(token: string): DecodedProvisional {
-  try {
-    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET, { algorithms: ['HS256'] });
-    if (typeof decoded === 'string' || decoded.kind !== 'provisional') {
-      throw Errors.unauthorized({ reason: 'wrong_token_kind' });
-    }
-    return decoded as DecodedProvisional;
-  } catch (err) {
-    if (err instanceof AppError) throw err;
-    throw mapJwtError(err);
-  }
-}
-
-/**
- * Accept either an access token or a provisional token. The `/auth/phone/*`
- * endpoints need this so a Telegram-linked user can finish phone verification.
- */
-export function verifyAccessOrProvisional(
-  token: string,
-): { kind: 'access'; decoded: DecodedAccess } | { kind: 'provisional'; decoded: DecodedProvisional } {
-  const unverified = jwt.decode(token);
-  if (unverified && typeof unverified === 'object' && (unverified as { kind?: string }).kind === 'provisional') {
-    return { kind: 'provisional', decoded: verifyProvisionalToken(token) };
-  }
-  return { kind: 'access', decoded: verifyAccessToken(token) };
 }
 
 export function verifyRefreshToken(token: string): DecodedRefresh {

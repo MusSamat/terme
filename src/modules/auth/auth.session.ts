@@ -11,7 +11,7 @@ import { sha256Hex } from '@/lib/random.js';
 import { logger } from '@/lib/logger.js';
 import type { Notifier } from '@/lib/notifier.js';
 import type { TokenPair, AdminRefreshResult } from './auth.types.js';
-import { issueTokenPair, inferPrimaryProvider } from './auth.helpers.js';
+import { issueTokenPair } from './auth.helpers.js';
 
 // Grace window for refresh rotation: a token replayed within this window is
 // treated as a legit client retry (concurrent refresh, or an app restart/update
@@ -141,15 +141,11 @@ export function createSessionMethods(prisma: PrismaClient, _notifier: Notifier) 
     if (!user || user.deletedAt) throw Errors.unauthorized({ reason: 'user_gone' });
     if (user.isBlocked) throw Errors.forbidden({ reason: 'blocked' });
 
-    const primaryProvider = (await inferPrimaryProvider(prisma, user.id)) ?? 'phone';
-
     const pair = await issueTokenPair(
       prisma,
       user.id,
       user.phone,
       user.roles as Role[],
-      user.telegramId ? user.telegramId.toString() : null,
-      primaryProvider,
       deviceInfo ?? stored.deviceInfo,
     );
     // Remember this rotation so a replay of `stored` inside the grace window

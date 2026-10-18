@@ -2,11 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import { Bot, type Context, GrammyError, InlineKeyboard, Keyboard } from 'grammy';
 import { env } from '@/config/env.js';
 import { logger } from '@/lib/logger.js';
-import {
-  handleTelegramLinkToken,
-  handleBotLoginToken,
-  registerFromTelegramContact,
-} from '@/modules/auth/auth.otp.js';
+import { linkTelegramContact } from '@/modules/auth/auth.otp.js';
 import { createBookingsService } from '@/modules/bookings/bookings.service.js';
 import { AppError } from '@/lib/errors.js';
 import type {
@@ -126,14 +122,14 @@ function formatDepartureDate(d: Date, lang: 'ru' | 'kg'): string {
   }
 }
 
-// Mini App base for deep-link buttons (TZ §8.6 routes). Telegram `web_app`
-// buttons require HTTPS, so on a plain-http dev host we omit them entirely
-// (callback Accept/Reject buttons still work — they carry no URL).
-const MINI_APP_URL = (env.MINI_APP_URL ?? env.BASE_URL).replace(/\/$/, '');
-const MINI_APP_HTTPS = MINI_APP_URL.startsWith('https://');
+// Web site base for link buttons. Telegram rejects non-HTTPS URL buttons on
+// some clients, so on a plain-http dev host we omit them entirely (callback
+// Accept/Reject buttons still work — they carry no URL).
+const WEB_URL = (env.WEB_URL ?? env.BASE_URL).replace(/\/$/, '');
+const MINI_APP_HTTPS = WEB_URL.startsWith('https://');
 
 function miniAppUrl(path: string): string {
-  return `${MINI_APP_URL}${path}`;
+  return `${WEB_URL}${path}`;
 }
 
 const L = (lang: 'ru' | 'kg', ru: string, kg: string): string => (lang === 'kg' ? kg : ru);
@@ -233,7 +229,7 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
             .text(L(lang, '✅ Принять', '✅ Кабыл алуу'), `accept_booking_${booking.id}`)
             .text(L(lang, '❌ Отклонить', '❌ Четке кагуу'), `reject_booking_${booking.id}`);
           if (MINI_APP_HTTPS) {
-            kb.row().webApp(L(lang, '→ Открыть', '→ Ачуу'), miniAppUrl('/my/bookings'));
+            kb.row().url(L(lang, '→ Открыть', '→ Ачуу'), miniAppUrl('/my/bookings'));
           }
           return kb;
         },
@@ -243,7 +239,7 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
       const driverName = await driverNameForBooking(prisma, booking);
       await send(passengerUserId, T.booking_accepted, { driverName }, (lang) =>
         MINI_APP_HTTPS
-          ? new InlineKeyboard().webApp(
+          ? new InlineKeyboard().url(
               L(lang, '💬 Чат', '💬 Чат'),
               miniAppUrl(`/my/bookings/${booking.id}/chat`),
             )
@@ -291,7 +287,7 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
         { senderName: sender?.name ?? '—', preview },
         (lang) =>
           MINI_APP_HTTPS
-            ? new InlineKeyboard().webApp(
+            ? new InlineKeyboard().url(
                 L(lang, '→ Ответить', '→ Жооп берүү'),
                 miniAppUrl(`/my/bookings/${message.bookingId}/chat`),
               )
@@ -308,7 +304,7 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
         { raterName: payload.raterName, score: payload.score },
         (lang) =>
           MINI_APP_HTTPS
-            ? new InlineKeyboard().webApp(L(lang, '→ Посмотреть', '→ Көрүү'), miniAppUrl('/profile'))
+            ? new InlineKeyboard().url(L(lang, '→ Посмотреть', '→ Көрүү'), miniAppUrl('/profile'))
             : undefined,
       );
     },
@@ -455,56 +451,14 @@ export async function startTelegramBot(
     ])
     .catch((err: unknown) => logger.warn({ err }, 'setMyCommands failed'));
 
-  if (MINI_APP_HTTPS) {
-    await bot.api
-      .setChatMenuButton({
-        menu_button: {
-          type: 'web_app',
-          text: '🚗 Открыть Terme',
-          web_app: { url: MINI_APP_URL },
-        },
-      })
-      .catch((err: unknown) => logger.warn({ err }, 'setChatMenuButton failed'));
-  }
-
   bot.command('start', async (ctx: Context) => {
-    const payload = ctx.match as string | undefined;
-    logger.debug({ payload, from: ctx.from?.id }, 'bot /start received');
-    if (payload?.startsWith('reg_') && ctx.from) {
-      await handleTelegramLinkToken(prisma, bot, payload.slice(4), ctx.from.id).catch(
-        (err: unknown) => logger.warn({ err }, 'handleTelegramLinkToken failed'),
-      );
-      return;
-    }
-    if (payload?.startsWith('bl_') && ctx.from) {
-      const outcome = await handleBotLoginToken(prisma, bot, payload.slice(3), ctx.from.id).catch(
-        (err: unknown) => {
-          logger.warn({ err }, 'handleBotLoginToken failed');
-          return 'expired' as const;
-        },
-      );
-      if (outcome === 'need_contact') {
-        // Free registration: ask the user to share their Telegram-verified
-        // number. The reply keyboard's request_contact button returns a contact
-        // whose user_id is the sharer's own — no OTP, no SMS.
-        const kb = new Keyboard().requestContact('📱 Поделиться номером').oneTime().resized();
-        await ctx.reply(
-          'Один шаг до регистрации в Terme 🚗\n\nНажмите кнопку ниже, чтобы поделиться номером телефона — Telegram подтвердит его автоматически.',
-          { reply_markup: kb },
-        );
-      }
-      return;
-    }
-
     // User-controlled name goes into parse_mode:'HTML' — escape it, otherwise
     // a name containing <>& breaks rendering (or the sendMessage call itself).
     const escapeHtml = (v: string): string =>
       v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const firstName = escapeHtml(ctx.from?.first_name ?? 'друг');
     const isReturning = ctx.from
-      ? !!(await prisma.authProvider.findFirst({
-          where: { provider: 'telegram', providerUserId: String(ctx.from.id) },
-        }))
+      ? !!(await prisma.user.findFirst({ where: { telegramId: BigInt(ctx.from.id), deletedAt: null } }))
       : false;
 
 
@@ -526,21 +480,27 @@ export async function startTelegramBot(
     // for a car inside the form, no verification needed.
     const kb = new InlineKeyboard();
     if (MINI_APP_HTTPS) {
-      kb.webApp('🔍 Найти поездку', miniAppUrl('/trips'))
-        .webApp('🧍 Найти пассажира', miniAppUrl('/requests'))
+      kb.url('🔍 Найти поездку', miniAppUrl('/trips'))
+        .url('🧍 Найти пассажира', miniAppUrl('/requests'))
         .row();
-      kb.webApp('➕ Опубликовать поездку', miniAppUrl('/trips/create')).row();
-      kb.webApp('📋 Мои поездки и брони', miniAppUrl('/my/bookings')).row();
+      kb.url('➕ Опубликовать поездку', miniAppUrl('/trips/create')).row();
+      kb.url('📋 Мои поездки и брони', miniAppUrl('/my/bookings')).row();
     }
     kb.text('🌐 Язык', 'lang').text('🔔 Уведомления', 'notify').row();
     kb.text('ℹ️ Помощь', 'help');
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
+    if (!isReturning) {
+      await ctx.reply(
+        'Чтобы бронировать и публиковать поездки, подтвердите номер — нажмите кнопку ниже.',
+        { reply_markup: new Keyboard().requestContact('📱 Поделиться номером').oneTime().resized() },
+      );
+    }
   });
 
   bot.callbackQuery('help', async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.reply(
-      'Платформа попутчиков. Публикуйте поездки, бронируйте места.\nПоддержка: @tappjet_support',
+      'Платформа попутчиков. Публикуйте поездки, бронируйте места.\nПоддержка: @terme_support',
     );
   });
 
@@ -625,22 +585,22 @@ export async function startTelegramBot(
       await ctx.reply('Пожалуйста, нажмите именно кнопку «Поделиться номером».');
       return;
     }
-    const result = await registerFromTelegramContact(
+    const result = await linkTelegramContact(
       prisma, ctx.from.id, c.phone_number, c.first_name, ctx.from.language_code,
     ).catch((err: unknown) => {
-      logger.warn({ err }, 'registerFromTelegramContact failed');
-      return 'no_pending' as const;
+      logger.warn({ err }, 'linkTelegramContact failed');
+      return null;
     });
-    if (result === 'ok') {
-      await ctx.reply('✅ Готово! Аккаунт создан. Вернитесь в браузер — вы уже вошли.', {
+    if (result?.status === 'ok') {
+      await ctx.reply('✅ Готово! Номер подтверждён, бот подключён к вашему аккаунту.', {
         reply_markup: { remove_keyboard: true },
       });
-    } else if (result === 'blocked') {
+    } else if (result?.status === 'blocked') {
       await ctx.reply('Аккаунт заблокирован. Обратитесь в поддержку.', {
         reply_markup: { remove_keyboard: true },
       });
     } else {
-      await ctx.reply('Регистрация не начата или ссылка устарела. Откройте сайт и нажмите «Продолжить через Telegram» заново.', {
+      await ctx.reply('Не получилось. Попробуйте ещё раз чуть позже.', {
         reply_markup: { remove_keyboard: true },
       });
     }
@@ -650,7 +610,7 @@ export async function startTelegramBot(
   // first-timers never have to type or guess anything.
   const linkCommand = (text: string, btn: string, path: string) => async (ctx: Context) => {
     const kb = MINI_APP_HTTPS
-      ? new InlineKeyboard().webApp(btn, miniAppUrl(path))
+      ? new InlineKeyboard().url(btn, miniAppUrl(path))
       : undefined;
     await ctx.reply(text, kb ? { reply_markup: kb } : undefined);
   };
@@ -669,12 +629,12 @@ export async function startTelegramBot(
 
   bot.command('help', (ctx: Context) =>
     ctx.reply(
-      'Платформа попутчиков. Публикуйте поездки, бронируйте места. Поддержка: @tappjet_support',
+      'Платформа попутчиков. Публикуйте поездки, бронируйте места. Поддержка: @terme_support',
     ),
   );
 
   bot.command('support', (ctx: Context) =>
-    ctx.reply('Контакт поддержки: @tappjet_support'),
+    ctx.reply('Контакт поддержки: @terme_support'),
   );
 
   bot.command('lang', async (ctx: Context) => {

@@ -16,13 +16,10 @@ describe('jwt', () => {
       sub: '00000000-0000-0000-0000-000000000001',
       phone: '+996700111222',
       roles: ['passenger'],
-      telegram_id: null,
-      provider: 'phone',
     });
     const decoded = verifyAccessToken(token);
     expect(decoded.sub).toBe('00000000-0000-0000-0000-000000000001');
     expect(decoded.roles).toEqual(['passenger']);
-    expect(decoded.provider).toBe('phone');
   });
 
   it('refuses to verify an access token as refresh', () => {
@@ -30,8 +27,6 @@ describe('jwt', () => {
       sub: 'u',
       phone: '+996700111222',
       roles: ['passenger'],
-      telegram_id: null,
-      provider: 'phone',
     });
     expect(() => verifyRefreshToken(token)).toThrow(AppError);
   });

@@ -11,28 +11,18 @@ import { uploadMemory } from '@/lib/uploads.js';
 import { webRefreshCookie } from '@/lib/cookies.js';
 import { Errors } from '@/lib/errors.js';
 import { createAuthService } from '@/modules/auth/auth.service.js';
-import type { TelegramSender } from '@/modules/auth/auth.otp.js';
 import {
-  AddProviderBody,
+  ChangePasswordBody,
   ConfirmPhoneChangeBody,
-  RemoveProviderParam,
-  SendOtpBody,
-  PhoneFromTelegramBody,
-  SetPasswordBody,
   StartPhoneChangeBody,
 } from '@/modules/auth/auth.schemas.js';
 import type { Notifier } from '@/lib/notifier.js';
-import type { Provider } from '@/lib/jwt.js';
 
-export function createUsersRouter(
-  prisma: PrismaClient,
-  notifier: Notifier,
-  bot: TelegramSender | null = null,
-): Router {
+export function createUsersRouter(prisma: PrismaClient, notifier: Notifier): Router {
   const router = Router();
   const service = createUsersService(prisma);
   const likes = createLikesService(prisma);
-  const auth = createAuthService(prisma, notifier, bot);
+  const auth = createAuthService(prisma, notifier);
 
   // Phone-change re-issues tokens — route the web refresh token into a cookie.
   router.use(webRefreshCookie());
@@ -132,63 +122,30 @@ export function createUsersRouter(
     }),
   );
 
-  // ─── v2.1 §8.12 Account management ────────────────────────────────
-
   router.patch(
     '/me/password',
     requireAuth,
-    validate({ body: SetPasswordBody }),
+    validate({ body: ChangePasswordBody }),
     asyncHandler(async (req, res) => {
       const { currentPassword, newPassword } = req.body as {
-        currentPassword?: string;
+        currentPassword: string;
         newPassword: string;
       };
-      await auth.setPassword(req.user!.id, newPassword, currentPassword);
+      await auth.changePassword(req.user!.id, currentPassword, newPassword);
       res.status(204).send();
     }),
   );
 
+  // ─── Phone change: WhatsApp code to the new number ─────────────────
   router.patch(
     '/me/phone',
     requireAuth,
-    validate({ body: StartPhoneChangeBody }),
-    asyncHandler(async (req, res) => {
-      const result = await auth.startPhoneChange(
-        req.user!.id,
-        req.body as Parameters<typeof auth.startPhoneChange>[1],
-      );
-      res.json(result);
-    }),
-  );
-
-  // Send an OTP that verifies OWNERSHIP of a new phone — always by SMS to
-  // that phone. (Was: DM to the requester's own Telegram, which proved
-  // nothing and enabled claiming/merging accounts behind arbitrary numbers.)
-  router.post(
-    '/me/phone/send-otp',
-    requireAuth,
     sendOtpMinuteLimit,
     sendOtpDailyLimit,
-    validate({ body: SendOtpBody }),
+    validate({ body: StartPhoneChangeBody }),
     asyncHandler(async (req, res) => {
-      const { phone } = req.body as { phone: string };
-      const result = await auth.sendPhoneAddOtp(req.user!.id, phone);
-      res.json(result);
-    }),
-  );
-
-
-  // Telegram requestContact: signed payload from the mini app — Telegram
-  // already verified the number, so this binds it directly (no OTP).
-  router.post(
-    '/me/phone/from-telegram',
-    requireAuth,
-    validate({ body: PhoneFromTelegramBody }),
-    asyncHandler(async (req, res) => {
-      const { response } = req.body as { response: string };
-      const ua = req.header('user-agent')?.slice(0, 300);
-      const result = await auth.confirmPhoneFromTelegramContact(req.user!.id, response, ua);
-      res.json(result);
+      const { newPhone } = req.body as { newPhone: string };
+      res.json(await auth.startPhoneChange(req.user!.id, newPhone));
     }),
   );
 
@@ -201,29 +158,6 @@ export function createUsersRouter(
       const ua = req.header('user-agent')?.slice(0, 300);
       const result = await auth.confirmPhoneChange(req.user!.id, newPhone, code, ua);
       res.json(result);
-    }),
-  );
-
-  router.post(
-    '/me/providers',
-    requireAuth,
-    validate({ body: AddProviderBody }),
-    asyncHandler(async (req, res) => {
-      const result = await auth.addProvider(
-        req.user!.id,
-        req.body as Parameters<typeof auth.addProvider>[1],
-      );
-      res.status(201).json(result);
-    }),
-  );
-
-  router.delete(
-    '/me/providers/:provider',
-    requireAuth,
-    validate({ params: RemoveProviderParam }),
-    asyncHandler(async (req, res) => {
-      await auth.removeProvider(req.user!.id, req.params.provider as Provider);
-      res.status(204).send();
     }),
   );
 

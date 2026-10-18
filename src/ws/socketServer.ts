@@ -45,7 +45,7 @@ interface AuthedSocket extends Socket {
  */
 export function createIoServer(httpServer: HttpServer): IoServer {
   return new IoServer(httpServer, {
-    // Same allowlist as REST (incl. MINI_APP_URL) — no more reflect-any origin.
+    // Same allowlist as REST — no more reflect-any origin.
     cors: {
       origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
       credentials: true,

@@ -2,12 +2,11 @@ import { env, isProd } from '@/config/env.js';
 
 /**
  * Single source of truth for allowed browser origins, shared by REST (server.ts)
- * and Socket.IO (socketServer.ts). The Mini App origin comes from MINI_APP_URL
- * so a tunnel/domain change is a one-line .env edit — no code change.
+ * and Socket.IO (socketServer.ts). The web site origin comes from WEB_URL.
  */
 
-// Origins never carry a trailing slash; normalize so MINI_APP_URL matches.
-const miniApp = env.MINI_APP_URL?.replace(/\/$/, '');
+// Origins never carry a trailing slash; normalize so WEB_URL matches.
+const web = env.WEB_URL?.replace(/\/$/, '');
 
 export const allowedOrigins: string[] = isProd
   ? [
@@ -15,14 +14,14 @@ export const allowedOrigins: string[] = isProd
         .split(',')
         .map((o) => o.trim())
         .filter(Boolean),
-      ...(miniApp ? [miniApp] : []),
+      ...(web ? [web] : []),
     ]
   : [
       'http://localhost:3000',
       'http://localhost:3001',
       'http://127.0.0.1:3000',
       'http://127.0.0.1:3001',
-      ...(miniApp ? [miniApp] : []),
+      ...(web ? [web] : []),
     ];
 
 // Any localhost/127.0.0.1 port — covers Flutter web (`flutter run -d chrome`).

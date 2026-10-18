@@ -17,7 +17,6 @@ export interface KpiCards {
   onlineNow: number;              // users seen in the last 60s (presence)
   activeByPlatform: {             // DAU (24h) split by last presence platform
     web: number;
-    mini: number;
     mobile: number;
     unknown: number;
   };
@@ -97,10 +96,10 @@ export function createAdminAnalyticsService(prisma: PrismaClient): AdminAnalytic
       }),
     ]);
 
-    const activeByPlatform = { web: 0, mini: 0, mobile: 0, unknown: 0 };
+    const activeByPlatform = { web: 0, mobile: 0, unknown: 0 };
     for (const row of activeByPlatformRows) {
       const key =
-        row.lastPlatform === 'web' || row.lastPlatform === 'mini' || row.lastPlatform === 'mobile'
+        row.lastPlatform === 'web' || row.lastPlatform === 'mobile'
           ? row.lastPlatform
           : 'unknown';
       activeByPlatform[key] += row._count._all;

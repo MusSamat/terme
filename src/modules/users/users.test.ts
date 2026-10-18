@@ -3,8 +3,6 @@ import request from 'supertest';
 import type { Express } from 'express';
 import { testPrisma } from '../../../tests/setup.js';
 import { createApp } from '@/server.js';
-import crypto from 'node:crypto';
-import { clearSentMessages, getSentMessages } from '@/lib/sms.js';
 import { createUser, jpegBuffer } from '../../../tests/factories.js';
 
 let app: Express;
@@ -167,81 +165,5 @@ describe('GET /v1/cities', () => {
     const res = await request(app).get('/v1/cities');
     expect(res.status).toBe(200);
     expect(res.body.data.map((c: { nameRu: string }) => c.nameRu)).toEqual(['Бишкек']);
-  });
-});
-
-describe('POST /v1/users/me/phone/send-otp — SMS-only delivery (possession proof)', () => {
-  it('sends the code to the TARGET phone via SMS, never to the requester Telegram', async () => {
-    clearSentMessages();
-    const u = await createUser(testPrisma, { telegramId: BigInt(777001) });
-    const res = await request(app)
-      .post('/v1/users/me/phone/send-otp')
-      .set('Authorization', `Bearer ${u.accessToken}`)
-      .send({ phone: '+996700999888' });
-    expect(res.status).toBe(200);
-    const sms = getSentMessages();
-    expect(sms).toHaveLength(1);
-    expect(sms[0]!.phone).toBe('+996700999888');
-  });
-});
-
-describe('POST /v1/users/me/phone/from-telegram (requestContact binding)', () => {
-  function signContactResponse(contact: object, botToken: string): string {
-    const params = new URLSearchParams();
-    params.set('contact', JSON.stringify(contact));
-    params.set('auth_date', String(Math.floor(Date.now() / 1000)));
-    const entries: [string, string][] = [];
-    params.forEach((v, k) => entries.push([k, v]));
-    entries.sort(([a], [b]) => (a < b ? -1 : 1));
-    const dcs = entries.map(([k, v]) => `${k}=${v}`).join('\n');
-    const secret = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
-    params.set('hash', crypto.createHmac('sha256', secret).update(dcs).digest('hex'));
-    return params.toString();
-  }
-  const BOT = process.env['TELEGRAM_BOT_TOKEN'] ?? '';
-
-  it('binds the Telegram-verified number and returns tokens', async () => {
-    const u = await createUser(testPrisma, { telegramId: BigInt(880001), phone: '+prov:contact-a' });
-    const response = signContactResponse(
-      { phone_number: '996700777666', user_id: 880001, first_name: 'T' },
-      BOT,
-    );
-    const res = await request(app)
-      .post('/v1/users/me/phone/from-telegram')
-      .set('Authorization', `Bearer ${u.accessToken}`)
-      .send({ response });
-    expect(res.status).toBe(200);
-    expect(res.body.accessToken).toBeTruthy();
-    const fresh = await testPrisma.user.findUniqueOrThrow({ where: { id: u.id } });
-    expect(fresh.phone).toBe('+996700777666');
-    expect(fresh.phoneVerifiedAt).not.toBeNull();
-  });
-
-  it('rejects a payload signed for a DIFFERENT telegram user', async () => {
-    const u = await createUser(testPrisma, { telegramId: BigInt(880002) });
-    const response = signContactResponse(
-      { phone_number: '996700555444', user_id: 999999, first_name: 'X' },
-      BOT,
-    );
-    const res = await request(app)
-      .post('/v1/users/me/phone/from-telegram')
-      .set('Authorization', `Bearer ${u.accessToken}`)
-      .send({ response });
-    expect(res.status).toBe(401);
-    expect(res.body.error.details.reason).toBe('contact_user_mismatch');
-  });
-
-  it('rejects a tampered signature', async () => {
-    const u = await createUser(testPrisma, { telegramId: BigInt(880003) });
-    const response = signContactResponse(
-      { phone_number: '996700333222', user_id: 880003 },
-      BOT,
-    ).replace(/hash=\w{8}/, 'hash=00000000');
-    const res = await request(app)
-      .post('/v1/users/me/phone/from-telegram')
-      .set('Authorization', `Bearer ${u.accessToken}`)
-      .send({ response });
-    expect(res.status).toBe(401);
-    expect(res.body.error.details.reason).toBe('contact_signature_invalid');
   });
 });

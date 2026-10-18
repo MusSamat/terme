@@ -49,9 +49,9 @@ export const globalIpLimit = build({
   limit: 300,
 });
 
-/** TZ §7.3 "POST /auth/telegram · 10 запросов в минуту на IP". */
-export const telegramAuthLimit = build({
-  name: 'telegram_auth',
+/** Login / registration endpoints: 10 requests per minute per IP. */
+export const authLimit = build({
+  name: 'auth',
   windowMs: 60_000,
   limit: 10,
 });

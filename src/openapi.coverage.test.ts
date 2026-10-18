@@ -92,7 +92,7 @@ function specRoutes(): Set<string> {
   return out;
 }
 
-// ─── Frozen known-gaps allowlist (72 routes) ─────────────────────────────────
+// ─── Frozen known-gaps allowlist (61 routes) ─────────────────────────────────
 // Routes mounted today but intentionally NOT yet in openapi.ts. Shrink this as
 // the spec is backfilled; never grow it silently — a new entry means a new
 // endpoint shipped without docs.
@@ -112,8 +112,6 @@ const KNOWN_GAPS: readonly string[] = [
   'GET /admin/trips/{id}',
   'GET /admin/whatsapp/conversations',
   'GET /admin/whatsapp/conversations/{id}/messages',
-  'GET /auth/telegram/bot-login/status',
-  'GET /auth/telegram/link/status',
   'GET /cars',
   'GET /cars/catalog/brands',
   'GET /cars/catalog/brands/{id}/models',
@@ -147,13 +145,6 @@ const KNOWN_GAPS: readonly string[] = [
   'POST /admin/whatsapp/conversations/{id}/reply',
   'POST /auth/admin/change-password',
   'POST /auth/admin/refresh',
-  'POST /auth/check-phone',
-  'POST /auth/phone/reset-password',
-  'POST /auth/register',
-  'POST /auth/telegram/bot-login/claim',
-  'POST /auth/telegram/bot-login/init',
-  'POST /auth/telegram/link/init',
-  'POST /auth/telegram/otp/send',
   'POST /cars',
   'POST /passenger-requests',
   'POST /passenger-requests/{id}/contact',
@@ -166,8 +157,6 @@ const KNOWN_GAPS: readonly string[] = [
   'POST /trips/{id}/contact',
   'POST /trips/{id}/seats',
   'POST /trips/{id}/view',
-  'POST /users/me/phone/from-telegram',
-  'POST /users/me/phone/send-otp',
   'POST /whatsapp/webhook',
 ];
 

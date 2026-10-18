@@ -1,46 +1,30 @@
 import type { PrismaClient } from '@prisma/client';
 import type { Notifier } from '@/lib/notifier.js';
 import type { AuthService } from './auth.types.js';
-import { createOtpMethods, type TelegramSender } from './auth.otp.js';
+import { createOtpMethods } from './auth.otp.js';
 import { createSessionMethods } from './auth.session.js';
-import { createProvidersMethods } from './auth.providers.js';
+import { createAdminAuthMethods } from './auth.admin.js';
 import { createPasswordMethods } from './auth.password.js';
 
-export function createAuthService(
-  prisma: PrismaClient,
-  notifier: Notifier,
-  bot: TelegramSender | null = null,
-): AuthService {
-  const otp = createOtpMethods(prisma, bot);
-  const session = createSessionMethods(prisma, notifier);
-  const providers = createProvidersMethods(prisma);
-  const passwordAuth = createPasswordMethods(prisma, otp);
-
-  async function checkPhone(
-    phone: string,
-  ): Promise<{ exists: boolean; hasPassword: boolean; hasTelegram: boolean }> {
+export function createAuthService(prisma: PrismaClient, notifier: Notifier): AuthService {
+  // Tells the client which step comes next: register (new number), password
+  // (web, password set) or «set a password via WhatsApp» (web, none yet).
+  async function checkPhone(phone: string): Promise<{ exists: boolean; hasPassword: boolean }> {
     const user = await prisma.user.findFirst({
       where: { phone, deletedAt: null },
-      select: { passwordHash: true, telegramId: true },
+      select: { passwordHash: true },
     });
-    if (!user) return { exists: false, hasPassword: false, hasTelegram: false };
-    return { exists: true, hasPassword: !!user.passwordHash, hasTelegram: !!user.telegramId };
+    return { exists: !!user, hasPassword: !!user?.passwordHash };
   }
 
+  const otp = createOtpMethods(prisma);
   return {
     ...otp,
-    ...session,
-    ...providers,
-    ...passwordAuth,
+    ...createPasswordMethods(prisma, otp),
+    ...createSessionMethods(prisma, notifier),
+    ...createAdminAuthMethods(prisma),
     checkPhone,
   };
 }
 
-export type {
-  AuthService,
-  AuthResult,
-  TokenPair,
-  AnyAuthResult,
-  ProvisionalAuthResult,
-  AdminAuthResult,
-} from './auth.types.js';
+export type { AuthService, AuthResult, TokenPair, AdminAuthResult } from './auth.types.js';

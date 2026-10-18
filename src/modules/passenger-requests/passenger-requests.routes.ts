@@ -15,7 +15,7 @@ import {
 } from './passenger-requests.schemas.js';
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
-import { optionalAuth, requireAuth, requirePhone } from '@/middleware/auth.js';
+import { optionalAuth, requireAuth } from '@/middleware/auth.js';
 import { requestCreateLimit } from '@/middleware/rateLimit.js';
 
 export function createPassengerRequestsRouter(prisma: PrismaClient, notifier: Notifier): Router {
@@ -122,7 +122,6 @@ export function createPassengerRequestsRouter(prisma: PrismaClient, notifier: No
   router.post(
     '/',
     requireAuth,
-    requirePhone,
     requestCreateLimit,
     validate({ body: CreatePassengerRequestBody }),
     asyncHandler(async (req, res) => {
@@ -138,7 +137,6 @@ export function createPassengerRequestsRouter(prisma: PrismaClient, notifier: No
   router.patch(
     '/:id',
     requireAuth,
-    requirePhone,
     validate({ params: RequestIdParam, body: UpdatePassengerRequestBody }),
     asyncHandler(async (req, res) => {
       const updated = await service.update(

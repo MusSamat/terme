@@ -168,9 +168,8 @@ async function seed(): Promise<void> {
   const passwordHash = await bcrypt.hash('TestPass12', 4);
   const now = new Date();
 
-  // 1) Driver pool: users + auth_providers + verified driver profiles.
+  // 1) Driver pool: users + verified driver profiles.
   const userIds: string[] = [];
-  const authRows: Prisma.AuthProviderCreateManyInput[] = [];
   const profileRows: Prisma.DriverProfileCreateManyInput[] = [];
 
   for (let i = 1; i <= DRIVERS; i++) {
@@ -190,7 +189,6 @@ async function seed(): Promise<void> {
       },
     });
     userIds.push(user.id);
-    authRows.push({ userId: user.id, provider: 'phone', providerUserId: phone });
     profileRows.push({
       userId: user.id,
       carMake: car.make,
@@ -208,7 +206,6 @@ async function seed(): Promise<void> {
       totalTrips: 0,
     });
   }
-  await prisma.authProvider.createMany({ data: authRows });
   await prisma.driverProfile.createMany({ data: profileRows });
   console.warn(`[sights-seed] ${userIds.length} drivers + profiles created`);
 

@@ -3,8 +3,8 @@ import { logger } from '@/lib/logger.js';
 import { env } from '@/config/env.js';
 
 // Platforms we attribute presence to. Header `X-Client-Platform` carries it.
-export type Platform = 'web' | 'mini' | 'mobile';
-const PLATFORMS: readonly Platform[] = ['web', 'mini', 'mobile'];
+export type Platform = 'web' | 'mobile';
+const PLATFORMS: readonly Platform[] = ['web', 'mobile'];
 
 export function normalizePlatform(raw: string | undefined | null): Platform | null {
   if (!raw) return null;

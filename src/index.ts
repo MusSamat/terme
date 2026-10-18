@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   );
   notifierRef = notifier;
   attachChatNamespace(io, prisma, notifier);
-  const app = createApp(prisma, notifier, bot);
+  const app = createApp(prisma, notifier);
   server.on('request', app);
 
   // Notifier wired in so auto_complete_trips can deliver «оцените поездку»

@@ -61,12 +61,9 @@ export function httpStatusForCode(code: ErrorCodeValue): number {
 
 // Narrow helpers — convey intent at call sites.
 // ─── Tiny helper not strictly about errors, but about consistently hiding
-// phone-column placeholders from API responses. Telegram-only users have
-// "+tg:<id>" until they verify a phone; soft-deleted users have "+del:<rand>".
+// the soft-deleted users' phone tombstone ("+del:<rand>") from API responses.
 export function publicPhone(stored: string): string {
-  return stored.startsWith('+tg:') || stored.startsWith('+del:') || stored.startsWith('+prov:')
-    ? ''
-    : stored;
+  return stored.startsWith('+del:') ? '' : stored;
 }
 
 export const Errors = {

@@ -17,10 +17,9 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
   BASE_URL: z.string().url().default('http://localhost:3000'),
-  // Mini App / Web client base URL — used for Telegram deep-link buttons
-  // (e.g. app.popytchik.kg/bookings/<id>/chat). Defaults to BASE_URL in dev.
-  // Empty string (from a copied .env template) is treated as unset.
-  MINI_APP_URL: z.preprocess(
+  // Public web site (terme_ft). Allowed by CORS and used for links the Telegram
+  // bot sends (trip pages, chats). Empty string is treated as unset.
+  WEB_URL: z.preprocess(
     (v) => (v === '' ? undefined : v),
     z.string().url().optional(),
   ),
@@ -37,23 +36,6 @@ const EnvSchema = z.object({
 
   TELEGRAM_BOT_TOKEN: z.string().default(''),
   TELEGRAM_BOT_USERNAME: z.string().default('terme_kg_bot'),
-  // Telegram Gateway API token — delivers OTP codes to a phone over Telegram
-  // (https://gateway.telegram.org). Empty during the testing period: codes are
-  // captured/logged locally instead of sent (see lib/telegramGateway.ts).
-  TELEGRAM_GATEWAY_TOKEN: z.string().default(''),
-
-  // Dexatel — delivers OTP codes over the Telegram channel (omnichannel).
-  // Empty during testing: codes are captured/logged locally (see lib/dexatel.ts).
-  DEXATEL_API_KEY: z.string().default(''),
-  DEXATEL_SENDER: z.string().default('Terme'),
-
-  // OAuth — audience / client IDs to match in verified JWTs. Comma-separated
-  // so the Flutter app and the Web client can use different client ids.
-  // H1: no hardcoded secret default. The real value MUST come from the env and
-  // any value ever committed here is considered leaked and must be rotated in
-  // Google Cloud Console. Empty default → the verifier fails closed (rejects).
-  GOOGLE_CLIENT_IDS: z.string().default(''),
-  APPLE_CLIENT_IDS: z.string().default(''),
 
   // WhatsApp Cloud API (Meta). All optional/defaulted so a fresh checkout boots
   // without them; the webhook GET rejects verification until VERIFY_TOKEN is set,
@@ -75,13 +57,7 @@ const EnvSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
 
-  SMS_PROVIDER: z.enum(['mock', 'mega', 'nikita']).default('mock'),
-  SMS_API_URL: z.string().default(''),
-  SMS_API_LOGIN: z.string().default(''),
-  SMS_API_PASSWORD: z.string().default(''),
-  SMS_SENDER: z.string().default('Terme'),
-
-  SUPERADMIN_EMAIL: z.string().email().default('superadmin@tappjet.kg'),
+  SUPERADMIN_EMAIL: z.string().email().default('superadmin@terme.kg'),
   SUPERADMIN_TEMP_PASSWORD: z.string().min(8).default('change-on-first-login-please'),
 
   FILES_DIR: z.string().default('./var/files'),
@@ -131,18 +107,14 @@ function parseEnv(): Env {
     process.stderr.write(`\n✗ Invalid environment variables:\n${issues}\n\n`);
     process.exit(1);
   }
-  // N14: in production OTP MUST have a real delivery channel. Without one,
-  // deliverOtp() silently falls back to capturing the code in logs (a
-  // plaintext-OTP leak) — fail fast at startup instead. WhatsApp (template) OR
-  // Dexatel (SMS fallback) satisfies this; either channel is enough.
+  // N14: in production OTP MUST go out over WhatsApp. Without it deliverOtp()
+  // would fall back to capturing the code in logs (a plaintext-OTP leak).
   const whatsappConfigured =
     !!parsed.data.WHATSAPP_ACCESS_TOKEN && !!parsed.data.WHATSAPP_PHONE_NUMBER_ID;
-  const dexatelConfigured = !!parsed.data.DEXATEL_API_KEY;
-  if (parsed.data.NODE_ENV === 'production' && !whatsappConfigured && !dexatelConfigured) {
+  if (parsed.data.NODE_ENV === 'production' && !whatsappConfigured) {
     process.stderr.write(
-      '\n✗ Production requires an OTP delivery channel: either WhatsApp ' +
-        '(WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_NUMBER_ID) or Dexatel ' +
-        '(DEXATEL_API_KEY), so OTP is delivered and never captured to logs.\n\n',
+      '\n✗ Production requires WhatsApp OTP delivery ' +
+        '(WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_NUMBER_ID).\n\n',
     );
     process.exit(1);
   }
