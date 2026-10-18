@@ -717,6 +717,18 @@ model ListingView {
   @@map("listing_views")
 }
 
+// ─── Telegram bot conversation state ─────────────────────────────────
+// One row per chat: the current step of a multi-step flow + its draft data.
+model BotSession {
+  telegramId BigInt   @id @map("telegram_id")
+  state      String?  @db.VarChar(40)
+  data       Json     @default("{}")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([updatedAt])
+  @@map("bot_sessions")
+}
+
 // ─── WhatsApp inbox (Cloud API) ───────────────────────────────────────
 // Minimal inbox over the WhatsApp Cloud API: one conversation per customer
 // phone number, an ordered message log per conversation. direction/status are

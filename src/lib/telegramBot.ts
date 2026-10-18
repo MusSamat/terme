@@ -1,10 +1,8 @@
 import type { PrismaClient } from '@prisma/client';
-import { Bot, type Context, GrammyError, InlineKeyboard, Keyboard } from 'grammy';
+import { Bot, GrammyError, InlineKeyboard } from 'grammy';
 import { env } from '@/config/env.js';
 import { logger } from '@/lib/logger.js';
-import { linkTelegramContact } from '@/modules/auth/auth.otp.js';
-import { createBookingsService } from '@/modules/bookings/bookings.service.js';
-import { AppError } from '@/lib/errors.js';
+import { registerBotHandlers } from '@/bot/index.js';
 import type {
   Notifier,
   PublicBooking,
@@ -22,8 +20,8 @@ import type {
  *     own worker process; the public surface stays the same.
  *
  * Language: every outgoing notification reads users.language (ru | kg) and
- * selects the matching template. Commands: /start, /help, /mytrips, /support,
- * /lang, /unsubscribe, /subscribe.
+ * selects the matching template. The conversational client (menus, flows)
+ * lives in src/bot.
  */
 
 export type BotInstance = Bot;
@@ -126,34 +124,13 @@ function formatDepartureDate(d: Date, lang: 'ru' | 'kg'): string {
 // some clients, so on a plain-http dev host we omit them entirely (callback
 // Accept/Reject buttons still work — they carry no URL).
 const WEB_URL = (env.WEB_URL ?? env.BASE_URL).replace(/\/$/, '');
-const MINI_APP_HTTPS = WEB_URL.startsWith('https://');
+const WEB_HTTPS = WEB_URL.startsWith('https://');
 
-function miniAppUrl(path: string): string {
+function webUrl(path: string): string {
   return `${WEB_URL}${path}`;
 }
 
 const L = (lang: 'ru' | 'kg', ru: string, kg: string): string => (lang === 'kg' ? kg : ru);
-
-// Map a thrown AppError to a short localized toast for the callback button.
-function bookingDecisionError(err: unknown, lang: 'ru' | 'kg'): string {
-  if (err instanceof AppError) {
-    switch (err.code) {
-      case 'FORBIDDEN':
-        return L(lang, 'Это не ваша поездка', 'Бул сиздин сапарыңыз эмес');
-      case 'SEATS_NOT_AVAILABLE':
-        return L(lang, 'Мест больше нет', 'Орун калган жок');
-      case 'TRIP_NOT_ACTIVE':
-        return L(lang, 'Поездка неактивна', 'Сапар активдүү эмес');
-      case 'CONFLICT':
-        return L(lang, 'Запрос уже обработан', 'Арыз мурунтан иштелген');
-      case 'NOT_FOUND':
-        return L(lang, 'Запрос не найден', 'Арыз табылган жок');
-      default:
-        break;
-    }
-  }
-  return L(lang, 'Ошибка. Откройте приложение.', 'Ката. Колдонмону ачыңыз.');
-}
 
 export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
   const { prisma, bot } = deps;
@@ -228,8 +205,8 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
           const kb = new InlineKeyboard()
             .text(L(lang, '✅ Принять', '✅ Кабыл алуу'), `accept_booking_${booking.id}`)
             .text(L(lang, '❌ Отклонить', '❌ Четке кагуу'), `reject_booking_${booking.id}`);
-          if (MINI_APP_HTTPS) {
-            kb.row().url(L(lang, '→ Открыть', '→ Ачуу'), miniAppUrl('/my/bookings'));
+          if (WEB_HTTPS) {
+            kb.row().url(L(lang, '→ Открыть', '→ Ачуу'), webUrl('/my/bookings'));
           }
           return kb;
         },
@@ -238,10 +215,10 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
     async bookingAccepted(passengerUserId, { booking }) {
       const driverName = await driverNameForBooking(prisma, booking);
       await send(passengerUserId, T.booking_accepted, { driverName }, (lang) =>
-        MINI_APP_HTTPS
+        WEB_HTTPS
           ? new InlineKeyboard().url(
               L(lang, '💬 Чат', '💬 Чат'),
-              miniAppUrl(`/my/bookings/${booking.id}/chat`),
+              webUrl(`/my/bookings/${booking.id}/chat`),
             )
           : undefined,
       );
@@ -286,10 +263,10 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
         T.chat_message,
         { senderName: sender?.name ?? '—', preview },
         (lang) =>
-          MINI_APP_HTTPS
+          WEB_HTTPS
             ? new InlineKeyboard().url(
                 L(lang, '→ Ответить', '→ Жооп берүү'),
-                miniAppUrl(`/my/bookings/${message.bookingId}/chat`),
+                webUrl(`/my/bookings/${message.bookingId}/chat`),
               )
             : undefined,
       );
@@ -303,8 +280,8 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
         T.rating_received,
         { raterName: payload.raterName, score: payload.score },
         (lang) =>
-          MINI_APP_HTTPS
-            ? new InlineKeyboard().url(L(lang, '→ Посмотреть', '→ Көрүү'), miniAppUrl('/profile'))
+          WEB_HTTPS
+            ? new InlineKeyboard().url(L(lang, '→ Посмотреть', '→ Көрүү'), webUrl('/profile'))
             : undefined,
       );
     },
@@ -353,7 +330,16 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
       await send(userId, T.loyalty_tier_changed, { tier: payload.tier });
     },
     async requestResponseReceived(passengerId, payload) {
-      await send(passengerId, { ru: 'Водитель {name} предлагает поездку за {price} сом', kg: 'Айдоочу {name} жол {price} сом сунуштады' }, { name: payload.driverName, price: payload.price });
+      await send(
+        passengerId,
+        {
+          ru: '📨 Водитель <b>{name}</b> предлагает поездку за {price} сом.',
+          kg: '📨 Айдоочу <b>{name}</b> {price} сомго сапар сунуштады.',
+        },
+        { name: payload.driverName, price: payload.price },
+        (lang) =>
+          new InlineKeyboard().text(L(lang, '📋 Посмотреть предложения', '📋 Сунуштарды көрүү'), `of:${payload.requestId}`),
+      );
     },
     async requestResponseAccepted(driverId) {
       await send(driverId, { ru: 'Пассажир принял ваше предложение! Откройте чат.', kg: 'Жүргүнчү сиздин сунушту кабыл алды! Чатты ачыңыз.' }, {});
@@ -437,251 +423,7 @@ export async function startTelegramBot(
   }
   const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
 
-  await bot.api
-    .setMyCommands([
-      { command: 'start', description: '🏠 Главное меню' },
-      { command: 'find', description: '🔍 Найти поездку' },
-      { command: 'publish', description: '➕ Опубликовать поездку' },
-      { command: 'my', description: '📋 Мои поездки и брони' },
-      { command: 'help', description: 'ℹ️ Как это работает' },
-      { command: 'lang', description: '🌐 Язык / Тил' },
-      { command: 'support', description: '💬 Поддержка' },
-      { command: 'unsubscribe', description: '🔕 Отключить уведомления' },
-      { command: 'subscribe', description: '🔔 Включить уведомления' },
-    ])
-    .catch((err: unknown) => logger.warn({ err }, 'setMyCommands failed'));
-
-  bot.command('start', async (ctx: Context) => {
-    // User-controlled name goes into parse_mode:'HTML' — escape it, otherwise
-    // a name containing <>& breaks rendering (or the sendMessage call itself).
-    const escapeHtml = (v: string): string =>
-      v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const firstName = escapeHtml(ctx.from?.first_name ?? 'друг');
-    const isReturning = ctx.from
-      ? !!(await prisma.user.findFirst({ where: { telegramId: BigInt(ctx.from.id), deletedAt: null } }))
-      : false;
-
-
-
-    const greeting = isReturning
-      ? `👋 С возвращением, <b>${firstName}</b>!`
-      : `👋 Привет, <b>${firstName}</b>!`;
-
-    const text =
-      `${greeting}\n\n` +
-      `🚗 <b>Terme — поездки по Кыргызстану</b>\n\n` +
-      `Попутчики и такси из Бишкека в Ош, Каракол, Нарын и другие города. Или предложи свою поездку!\n\n` +
-      `✅ Верифицированные водители\n` +
-      `⭐ Рейтинги и отзывы\n` +
-      `💬 Встроенный чат\n` +
-      `📱 Работает прямо в Telegram`;
-
-    // Phase 1: no roles — one clear action set for everyone. Publishing asks
-    // for a car inside the form, no verification needed.
-    const kb = new InlineKeyboard();
-    if (MINI_APP_HTTPS) {
-      kb.url('🔍 Найти поездку', miniAppUrl('/trips'))
-        .url('🧍 Найти пассажира', miniAppUrl('/requests'))
-        .row();
-      kb.url('➕ Опубликовать поездку', miniAppUrl('/trips/create')).row();
-      kb.url('📋 Мои поездки и брони', miniAppUrl('/my/bookings')).row();
-    }
-    kb.text('🌐 Язык', 'lang').text('🔔 Уведомления', 'notify').row();
-    kb.text('ℹ️ Помощь', 'help');
-    await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
-    if (!isReturning) {
-      await ctx.reply(
-        'Чтобы бронировать и публиковать поездки, подтвердите номер — нажмите кнопку ниже.',
-        { reply_markup: new Keyboard().requestContact('📱 Поделиться номером').oneTime().resized() },
-      );
-    }
-  });
-
-  bot.callbackQuery('help', async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply(
-      'Платформа попутчиков. Публикуйте поездки, бронируйте места.\nПоддержка: @terme_support',
-    );
-  });
-
-  bot.callbackQuery('notify', async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (!ctx.from) return;
-    const user = await prisma.user.findFirst({ where: { telegramId: BigInt(ctx.from.id) } });
-    if (!user) {
-      await ctx.reply('Войдите через приложение, чтобы управлять уведомлениями.');
-      return;
-    }
-    const next = !user.notificationsEnabled;
-    await prisma.user.update({ where: { id: user.id }, data: { notificationsEnabled: next } });
-    await ctx.reply(next ? '🔔 Уведомления включены.' : '🔕 Уведомления отключены.');
-  });
-
-  bot.callbackQuery('lang', async (ctx) => {
-    await ctx.answerCallbackQuery();
-    if (!ctx.from) return;
-    const user = await prisma.user.findFirst({ where: { telegramId: BigInt(ctx.from.id) } });
-    if (!user) {
-      await ctx.reply('Войдите через приложение.');
-      return;
-    }
-    const next = user.language === 'ru' ? 'kg' : 'ru';
-    await prisma.user.update({ where: { id: user.id }, data: { language: next } });
-    await ctx.reply(next === 'kg' ? 'Тил: кыргызча' : 'Язык: русский');
-  });
-
-  // ─── Accept / Reject a booking straight from the notification ────────
-  // Reuses bookingsService — which enforces driver ownership and the seat
-  // transaction — so the bot path is exactly as safe as the REST path.
-  const decide = async (
-    ctx: Context,
-    action: 'accept' | 'reject',
-    bookingId: string,
-  ): Promise<void> => {
-    if (!ctx.from) {
-      await ctx.answerCallbackQuery();
-      return;
-    }
-    const user = await prisma.user.findFirst({ where: { telegramId: BigInt(ctx.from.id) } });
-    if (!user) {
-      await ctx.answerCallbackQuery({ text: 'Войдите через приложение', show_alert: true });
-      return;
-    }
-    const notifier = getNotifier();
-    if (!notifier) {
-      await ctx.answerCallbackQuery({
-        text: 'Сервис недоступен — откройте приложение',
-        show_alert: true,
-      });
-      return;
-    }
-    const lang: 'ru' | 'kg' = user.language === 'kg' ? 'kg' : 'ru';
-    const bookings = createBookingsService(prisma, notifier);
-    try {
-      if (action === 'accept') await bookings.accept(bookingId, user.id);
-      else await bookings.reject(bookingId, user.id);
-      const ok =
-        action === 'accept'
-          ? L(lang, '✅ Принято. Чат открыт.', '✅ Кабыл алынды. Чат ачылды.')
-          : L(lang, '❌ Отклонено', '❌ Четке кагылды');
-      await ctx.answerCallbackQuery({ text: ok });
-      // Drop the buttons so the request can't be actioned twice.
-      await ctx.editMessageReplyMarkup().catch(() => undefined);
-    } catch (err) {
-      logger.warn({ err, bookingId, action }, 'bot booking decision failed');
-      await ctx.answerCallbackQuery({ text: bookingDecisionError(err, lang), show_alert: true });
-    }
-  };
-
-  bot.callbackQuery(/^accept_booking_(.+)$/, (ctx) => decide(ctx, 'accept', ctx.match[1]!));
-  bot.callbackQuery(/^reject_booking_(.+)$/, (ctx) => decide(ctx, 'reject', ctx.match[1]!));
-
-  // Shared phone from the request_contact button → finish free registration.
-  bot.on('message:contact', async (ctx) => {
-    const c = ctx.message.contact;
-    // Only the user's OWN contact carries user_id === sender; a manually
-    // attached foreign contact is rejected (can't register someone else).
-    if (!ctx.from || c.user_id !== ctx.from.id) {
-      await ctx.reply('Пожалуйста, нажмите именно кнопку «Поделиться номером».');
-      return;
-    }
-    const result = await linkTelegramContact(
-      prisma, ctx.from.id, c.phone_number, c.first_name, ctx.from.language_code,
-    ).catch((err: unknown) => {
-      logger.warn({ err }, 'linkTelegramContact failed');
-      return null;
-    });
-    if (result?.status === 'ok') {
-      await ctx.reply('✅ Готово! Номер подтверждён, бот подключён к вашему аккаунту.', {
-        reply_markup: { remove_keyboard: true },
-      });
-    } else if (result?.status === 'blocked') {
-      await ctx.reply('Аккаунт заблокирован. Обратитесь в поддержку.', {
-        reply_markup: { remove_keyboard: true },
-      });
-    } else {
-      await ctx.reply('Не получилось. Попробуйте ещё раз чуть позже.', {
-        reply_markup: { remove_keyboard: true },
-      });
-    }
-  });
-
-  // Single-purpose commands — each answers with one clear web-app button so
-  // first-timers never have to type or guess anything.
-  const linkCommand = (text: string, btn: string, path: string) => async (ctx: Context) => {
-    const kb = MINI_APP_HTTPS
-      ? new InlineKeyboard().url(btn, miniAppUrl(path))
-      : undefined;
-    await ctx.reply(text, kb ? { reply_markup: kb } : undefined);
-  };
-  bot.command('find', linkCommand(
-    'Куда едем? Нажмите кнопку — увидите все поездки по вашему маршруту.',
-    '🔍 Найти поездку', '/trips',
-  ));
-  bot.command('publish', linkCommand(
-    'Едете сами и есть свободные места? Опубликуйте поездку за 30 секунд — пассажиры позвонят напрямую.',
-    '➕ Опубликовать поездку', '/trips/create',
-  ));
-  bot.command('my', linkCommand(
-    'Ваши объявления, брони и избранное — в одном месте.',
-    '📋 Открыть «Мои»', '/my/bookings',
-  ));
-
-  bot.command('help', (ctx: Context) =>
-    ctx.reply(
-      'Платформа попутчиков. Публикуйте поездки, бронируйте места. Поддержка: @terme_support',
-    ),
-  );
-
-  bot.command('support', (ctx: Context) =>
-    ctx.reply('Контакт поддержки: @terme_support'),
-  );
-
-  bot.command('lang', async (ctx: Context) => {
-    if (!ctx.from) return;
-    const user = await prisma.user.findFirst({ where: { telegramId: BigInt(ctx.from.id) } });
-    if (!user) return;
-    const next = user.language === 'ru' ? 'kg' : 'ru';
-    await prisma.user.update({ where: { id: user.id }, data: { language: next } });
-    await ctx.reply(next === 'kg' ? 'Тил: кыргызча' : 'Язык: русский');
-  });
-
-  const toggleSubscribe = async (ctx: Context, enabled: boolean): Promise<void> => {
-    if (!ctx.from) return;
-    const user = await prisma.user.findFirst({ where: { telegramId: BigInt(ctx.from.id) } });
-    if (!user) return;
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { notificationsEnabled: enabled },
-    });
-    await ctx.reply(
-      enabled ? 'Вы подписаны на уведомления.' : 'Вы отписаны от уведомлений.',
-    );
-  };
-  bot.command('unsubscribe', (ctx: Context) => toggleSubscribe(ctx, false));
-  bot.command('subscribe', (ctx: Context) => toggleSubscribe(ctx, true));
-
-  bot.command('mytrips', async (ctx: Context) => {
-    if (!ctx.from) return;
-    const user = await prisma.user.findFirst({ where: { telegramId: BigInt(ctx.from.id) } });
-    if (!user) {
-      await ctx.reply('Войдите через Mini App.');
-      return;
-    }
-    const now = new Date();
-    const [active, pending, accepted] = await Promise.all([
-      prisma.trip.count({
-        where: { driverId: user.id, status: 'active', departureAt: { gte: now } },
-      }),
-      prisma.booking.count({ where: { passengerId: user.id, status: 'pending' } }),
-      prisma.booking.count({ where: { passengerId: user.id, status: 'accepted' } }),
-    ]);
-    await ctx.reply(
-      `Активных поездок (как водитель): ${active}\n` +
-        `Бронирований в ожидании: ${pending}\n` +
-        `Принятых бронирований: ${accepted}`,
-    );
-  });
+  await registerBotHandlers(bot, { prisma, getNotifier });
 
   bot.catch((err) => logger.warn({ err }, 'grammy bot handler error'));
 

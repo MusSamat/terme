@@ -217,5 +217,5 @@ export function createCitiesService(prisma: PrismaClient) {
     });
   }
 
-  return { search, top, nearest, popularRoutes, spots, airports };
+  return { search, top, nearest, byIds, popularRoutes, spots, airports };
 }

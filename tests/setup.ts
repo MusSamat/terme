@@ -58,6 +58,7 @@ const TABLES = [
   'users',
   'admins',
   'trip_stops',
+  'bot_sessions',
 ];
 
 beforeAll(async () => {
