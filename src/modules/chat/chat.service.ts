@@ -65,7 +65,7 @@ export function createChatService(prisma: PrismaClient, notifier: Notifier): Cha
     return prisma.booking.findUnique({
       where: { id: bookingId },
       include: {
-        trip: { select: { id: true, driverId: true, status: true, updatedAt: true } },
+        trip: { select: { id: true, driverId: true, status: true, updatedAt: true, completedAt: true } },
       },
     });
   }
@@ -105,7 +105,9 @@ export function createChatService(prisma: PrismaClient, notifier: Notifier): Cha
       return;
 
     if (bk.status === 'completed') {
-      const age = Date.now() - bk.trip.updatedAt.getTime();
+      // Same clock as the post-trip phone visibility: completion time (views /
+      // likes bump updated_at, which used to keep the window open forever).
+      const age = Date.now() - (bk.trip.completedAt ?? bk.trip.updatedAt).getTime();
       if (age < POST_COMPLETION_WRITE_WINDOW_HOURS * 60 * 60_000) return;
       throw Errors.forbidden({ reason: 'chat_write_window_expired' });
     }

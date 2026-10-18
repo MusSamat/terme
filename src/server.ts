@@ -31,6 +31,7 @@ import { createPresenceRouter } from '@/modules/presence/presence.routes.js';
 import { createWhatsappRouter } from '@/modules/whatsapp/whatsapp.routes.js';
 import { NoopNotifier, type Notifier } from '@/lib/notifier.js';
 import { openapiDocument } from '@/openapi.js';
+import { privateFileGuard } from '@/lib/uploads.js';
 
 /**
  * Build the Express app. Returns a vanilla instance with no side effects —
@@ -113,6 +114,7 @@ export function createApp(prisma: PrismaClient, notifier: Notifier = new NoopNot
   // e.g. GET /avatars/2026/04/xxx.jpg → ./var/files/avatars/2026/04/xxx.jpg
   // Override Helmet's default CORP: same-origin so the web frontend (different port
   // in dev, different subdomain in prod) can load images with plain <img src>.
+  app.use(privateFileGuard);
   app.use(
     express.static(path.resolve(env.FILES_DIR), {
       setHeaders: (res) => {

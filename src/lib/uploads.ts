@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import multer, { type FileFilterCallback } from 'multer';
-import type { Request } from 'express';
+import type { Request, RequestHandler } from 'express';
 import { env } from '@/config/env.js';
 import { Errors } from '@/lib/errors.js';
 
@@ -197,7 +197,46 @@ export async function removeImage(relPath: string | null | undefined): Promise<v
   await fs.unlink(abs).catch(() => undefined); // idempotent — swallow ENOENT
 }
 
+// Identity documents and complaint evidence are never public: their URLs carry
+// a short-lived HMAC signature (works in a plain <img src>, no auth header).
+// Avatars and car photos stay public.
+const PRIVATE_DIRS = new Set(['driver_license', 'car_passport', 'selfie', 'complaint_attachments']);
+const SIGNED_URL_TTL_SEC = 15 * 60;
+
+function isPrivate(relPath: string): boolean {
+  return PRIVATE_DIRS.has(relPath.split('/')[0] ?? '');
+}
+
+function fileSignature(relPath: string, exp: number): string {
+  return crypto
+    .createHmac('sha256', env.JWT_ACCESS_SECRET)
+    .update(`file:${relPath}:${exp}`)
+    .digest('base64url');
+}
+
 export function toFileUrl(relPath: string | null | undefined): string | null {
   if (!relPath) return null;
-  return `${env.BASE_URL}/${relPath}`;
+  if (!isPrivate(relPath)) return `${env.BASE_URL}/${relPath}`;
+  const exp = Math.floor(Date.now() / 1000) + SIGNED_URL_TTL_SEC;
+  return `${env.BASE_URL}/${relPath}?exp=${exp}&sig=${fileSignature(relPath, exp)}`;
 }
+
+/** Mounted before express.static: private files need a valid, unexpired signature. */
+export const privateFileGuard: RequestHandler = (req, res, next) => {
+  const relPath = decodeURIComponent(req.path).replace(/^\/+/, '');
+  if (!isPrivate(relPath)) return next();
+  const exp = Number(req.query['exp']);
+  const sig = typeof req.query['sig'] === 'string' ? req.query['sig'] : '';
+  const expected = fileSignature(relPath, exp);
+  const valid =
+    Number.isFinite(exp) &&
+    exp > Date.now() / 1000 &&
+    sig.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  if (!valid) {
+    res.status(404).end();
+    return;
+  }
+  res.setHeader('Cache-Control', 'private, no-store');
+  next();
+};
