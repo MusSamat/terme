@@ -23,6 +23,17 @@ import {
 type Step = NonNullable<Draft['step']>;
 type Flow = NonNullable<Draft['flow']>;
 
+const SEARCH_FLOWS = new Set<Flow>(['findTrip', 'findPassengers', 'airport']);
+
+// A flexible request («время любое») departs at noon — or, later today, a bit
+// from now so it is still in the future.
+function flexibleDeparture(date: string): Date {
+  const noon = bishkekInstant(date, '12:00');
+  const soon = new Date(Date.now() + 60 * 60_000);
+  const endOfDay = bishkekInstant(date, '23:30');
+  return noon > soon ? noon : soon < endOfDay ? soon : endOfDay;
+}
+
 // Step order per flow; a step is skipped when its value is already in the draft.
 const ORDER: Record<Flow, Step[]> = {
   findTrip: ['from', 'to', 'date'],
@@ -32,6 +43,7 @@ const ORDER: Record<Flow, Step[]> = {
   airport: ['airportDir', 'airportPick', 'date'],
   book: ['seats'],
   offer: ['date', 'time', 'price', 'comment', 'confirm'],
+  link: ['code'], // handled in index.ts (sign-in), never advanced here
 };
 
 const PAGE = 5;
@@ -62,6 +74,7 @@ function filled(d: Draft, step: Step): boolean {
     case 'airportPick':
       return d.airportId !== undefined;
     case 'confirm':
+    case 'code':
       return false;
   }
 }
@@ -296,33 +309,42 @@ export function createFlows(svc: BotServices) {
         await svc.session.patch(tg(ctx), { [d.step]: value === 'any' ? null : Number(value) });
         break;
       case 'd':
+        // «Any date» only exists in search flows.
+        if (d.step !== 'date' || (value === 'any' && !SEARCH_FLOWS.has(d.flow!))) return false;
         await svc.session.patch(tg(ctx), { date: value === 'any' ? null : value });
         break;
       case 't':
+        if (d.step !== 'time') return false;
         await svc.session.patch(tg(ctx), { time: value });
         break;
       case 'n':
+        if (d.step !== 'seats') return false;
         await svc.session.patch(tg(ctx), { seats: Number(value) });
         break;
       case 'p':
+        if (d.step !== 'price') return false;
         await svc.session.patch(tg(ctx), { price: Number(value) });
         break;
       case 'sk':
+        if (!(d.step === 'flight' || d.step === 'comment' || (d.step === 'time' && d.flow === 'needRide'))) return false;
         await svc.session.patch(
           tg(ctx),
           d.step === 'flight' ? { flight: null } : d.step === 'time' ? { time: '' } : { comment: null },
         );
         break;
       case 'car': {
+        if (d.step !== 'car') return false;
         const car = (await svc.cars.listMy(user.id)).find((c) => c.id === value);
         if (!car) return false;
         await svc.session.patch(tg(ctx), { carId: car.id, maxSeats: car.seatsCount });
         break;
       }
       case 'ad':
+        if (d.step !== 'airportDir') return false;
         await svc.session.patch(tg(ctx), { airportDir: value === 'from' ? 'from' : 'to' });
         break;
       case 'ap':
+        if (d.step !== 'airportPick') return false;
         await onAirportPicked(ctx, user, d, Number(value));
         return true;
       case 'ok':
@@ -364,7 +386,7 @@ export function createFlows(svc: BotServices) {
             originCityId: d.from!,
             destinationCityId: d.to!,
             seatsNeeded: d.seats!,
-            departureDate: bishkekInstant(d.date!, d.time || '12:00').toISOString(),
+            departureDate: (d.time ? bishkekInstant(d.date!, d.time) : flexibleDeparture(d.date!)).toISOString(),
             flexible: !d.time,
             ...(d.comment ? { comment: d.comment } : {}),
             ...(d.flight ? { flightNumber: d.flight } : {}),

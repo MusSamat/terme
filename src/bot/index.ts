@@ -1,7 +1,7 @@
 import type { Bot, Context } from 'grammy';
 import { InlineKeyboard } from 'grammy';
 import { logger } from '@/lib/logger.js';
-import { linkTelegramContact } from '@/modules/auth/auth.otp.js';
+import { createOtpMethods, linkTelegramContact } from '@/modules/auth/auth.otp.js';
 import {
   createBotServices,
   errorText,
@@ -28,6 +28,14 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
   const svc = createBotServices(deps);
   const flows = createFlows(svc);
   const my = createMy(prisma, svc);
+  const otp = createOtpMethods(prisma);
+
+  async function finishLink(ctx: Context, userId: string): Promise<void> {
+    if (ctx.from) await svc.session.clear(ctx.from.id);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const t = TEXTS[langOf(user.language)];
+    await showMenu(ctx, user, `${t.linked}\n${t.modeNow(isDriverMode(user))}`);
+  }
 
   await bot.api
     .setMyCommands([
@@ -129,14 +137,24 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
         return null;
       },
     );
+    if (result?.status === 'needs_otp') {
+      // Existing web / mobile account: prove the number with a WhatsApp code.
+      try {
+        await otp.sendOtp(result.phone);
+        await svc.session.set(ctx.from.id, { flow: 'link', step: 'code', phone: result.phone });
+        await ctx.reply(TEXTS[l].linkCodeSent(result.phone), { reply_markup: { remove_keyboard: true } });
+      } catch (err) {
+        await ctx.reply(errorText(err, l));
+      }
+      return;
+    }
     if (result?.status !== 'ok') {
       await ctx.reply(result?.status === 'blocked' ? TEXTS[l].blocked : TEXTS[l].error, {
         reply_markup: { remove_keyboard: true },
       });
       return;
     }
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: result.userId } });
-    await showMenu(ctx, user, `${TEXTS[langOf(user.language)].linked}\n${TEXTS[langOf(user.language)].modeNow(isDriverMode(user))}`);
+    await finishLink(ctx, result.userId);
   });
 
   bot.on('message:location', async (ctx) => {
@@ -151,6 +169,19 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
     if (action) {
       if (ctx.from) await svc.session.clear(ctx.from.id);
       await runAction(ctx, action);
+      return;
+    }
+    const draft = ctx.from ? await svc.session.get(ctx.from.id) : {};
+    if (draft.flow === 'link' && draft.phone) {
+      const l = langOf(ctx.from?.language_code);
+      try {
+        await otp.consumeOtp(draft.phone, text.replace(/\D/g, ''));
+        const linked = await linkTelegramContact(prisma, ctx.from!.id, draft.phone, ctx.from?.first_name, ctx.from?.language_code, true);
+        if (linked.status === 'ok') await finishLink(ctx, linked.userId);
+        else await ctx.reply(linked.status === 'blocked' ? TEXTS[l].blocked : TEXTS[l].error);
+      } catch {
+        await ctx.reply(TEXTS[l].linkCodeWrong, { reply_markup: contactKeyboard(l) });
+      }
       return;
     }
     const user = await requireUser(prisma, ctx);

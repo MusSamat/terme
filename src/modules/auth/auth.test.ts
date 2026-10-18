@@ -341,17 +341,27 @@ describe('Telegram bot sign-in via shared contact (linkTelegramContact)', () => 
     expect(u?.name).toBe('Айбек');
   });
 
-  it('links Telegram to the EXISTING web/mobile account of that number', async () => {
+  it('an EXISTING web/mobile account needs a WhatsApp code before linking (recycled numbers)', async () => {
     const existing = await createUser(testPrisma, { phone: '+996700222333' });
-    const res = await linkTelegramContact(testPrisma, 666002, '+996700222333', 'Y', 'ru');
+    const first = await linkTelegramContact(testPrisma, 666002, '+996700222333', 'Y', 'ru');
+    expect(first).toEqual({ status: 'needs_otp', phone: '+996700222333' });
+    expect((await testPrisma.user.findUnique({ where: { id: existing.id } }))?.telegramId).toBeNull();
+    const res = await linkTelegramContact(testPrisma, 666002, '+996700222333', 'Y', 'ru', true);
     expect(res).toEqual({ status: 'ok', userId: existing.id, created: false });
     expect(await testPrisma.user.count()).toBe(1);
+  });
+
+  it('a chat already linked to the account re-links without a code', async () => {
+    const u = await createUser(testPrisma, { phone: '+996700222334', telegramId: 666003n });
+    expect(await linkTelegramContact(testPrisma, 666003, '996700222334', 'Y', 'ru')).toEqual({
+      status: 'ok', userId: u.id, created: false,
+    });
   });
 
   it('moves the Telegram id from a stale account to the phone owner', async () => {
     const stale = await createUser(testPrisma, { phone: '+996700777001', telegramId: 777n });
     const owner = await createUser(testPrisma, { phone: '+996700777002' });
-    await linkTelegramContact(testPrisma, 777, '996700777002', 'Z', 'ru');
+    await linkTelegramContact(testPrisma, 777, '996700777002', 'Z', 'ru', true);
     expect((await testPrisma.user.findUnique({ where: { id: stale.id } }))?.telegramId).toBeNull();
     expect((await testPrisma.user.findUnique({ where: { id: owner.id } }))?.telegramId).toBe(777n);
   });

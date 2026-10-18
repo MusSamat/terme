@@ -266,6 +266,9 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
 
     // "nb_" cursor prefix = the first page fell back to the nearby (radius)
     // tier (see trips.service.search) — keep the expanded filter on later pages.
+    if (input.cursor && input.cursor.startsWith('o_') !== (input.sort === 'nearest')) {
+      throw Errors.validation({ reason: 'cursor_sort_mismatch' });
+    }
     let nearby = input.cursor?.startsWith('nb_') ?? false;
     const cursor = nearby ? input.cursor!.slice(3) : input.cursor;
 

@@ -561,6 +561,12 @@ describe('Meeting points and sort=nearest', () => {
     expect(res.body.data[0].distanceKm).toBeLessThan(1);
   });
 
+  it('a cursor of the wrong shape for the sort is a 400, not a 500', async () => {
+    expect((await request(app).get('/v1/trips?cursor=o_20')).status).toBe(400);
+    const uuid = '00000000-0000-4000-8000-000000000000';
+    expect((await request(app).get(`/v1/trips?sort=nearest&near_lat=42.8&near_lng=74.6&cursor=${uuid}`)).status).toBe(400);
+  });
+
   it('sort=nearest without a viewer point is a 400', async () => {
     const res = await request(app).get('/v1/trips?sort=nearest');
     expect(res.status).toBe(400);

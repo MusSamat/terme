@@ -2,8 +2,8 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 
 // Draft of the multi-step flow the chat is in. Stored as JSON in bot_sessions.
 export interface Draft {
-  flow?: 'findTrip' | 'needRide' | 'findPassengers' | 'publish' | 'airport' | 'book' | 'offer';
-  step?: 'from' | 'to' | 'date' | 'time' | 'seats' | 'price' | 'comment' | 'flight' | 'car' | 'confirm' | 'airportDir' | 'airportPick';
+  flow?: 'findTrip' | 'needRide' | 'findPassengers' | 'publish' | 'airport' | 'book' | 'offer' | 'link';
+  step?: 'code' | 'from' | 'to' | 'date' | 'time' | 'seats' | 'price' | 'comment' | 'flight' | 'car' | 'confirm' | 'airportDir' | 'airportPick';
   from?: number;
   to?: number | null;
   date?: string | null; // YYYY-MM-DD, Asia/Bishkek
@@ -20,6 +20,7 @@ export interface Draft {
   cityId?: number;
   targetId?: string;
   cursor?: string | null;
+  phone?: string; // link flow: the number the WhatsApp code went to
 }
 
 // Drafts older than this are dropped — a stale half-filled flow is confusing.

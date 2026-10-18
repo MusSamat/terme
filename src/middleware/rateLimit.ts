@@ -78,9 +78,10 @@ export const adminLoginLimit = build({
 // ─── Phone-based (OTP) ────────────────────────────────────────────────
 // Limits are enforced in the service layer against otp_codes table — this is
 // a safety net in front. It keys on phone to defend across IP rotation.
+// Keyed on the number the code goes to (phone change sends it to newPhone).
 const phoneKey = (req: Request): string => {
-  const body = req.body as { phone?: string } | undefined;
-  return body?.phone ?? ipKey(req);
+  const body = req.body as { phone?: string; newPhone?: string } | undefined;
+  return body?.newPhone ?? body?.phone ?? ipKey(req);
 };
 
 /** TZ §7.3 "POST /auth/phone/send-otp · 1 запрос в минуту на номер". */

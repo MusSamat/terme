@@ -5,6 +5,7 @@ import { testPrisma } from '../../tests/setup.js';
 import { CITY } from '../../tests/cities.js';
 import { createUser, createVerifiedDriver } from '../../tests/factories.js';
 import { registerBotHandlers } from './index.js';
+import { getSentMessages, clearSentMessages } from '@/lib/otpCapture.js';
 
 // The bot runs against the real DB; Telegram API calls are captured instead of sent.
 interface Call {
@@ -106,6 +107,42 @@ describe('Telegram bot', () => {
     const user = await testPrisma.user.findFirst({ where: { telegramId: BigInt(TG) } });
     expect(user).toMatchObject({ phone: '+996700555111', name: 'Айбек' });
     expect(sent().at(-1)).toContain('Номер подтверждён');
+  });
+
+  it('an existing web / mobile account is linked only after its WhatsApp code', async () => {
+    clearSentMessages();
+    const existing = await createUser(testPrisma, { phone: '+996700555222' });
+    const contact = (phone: string) =>
+      bot.handleUpdate({
+        update_id: updateId++,
+        message: { message_id: 97, date: 0, chat, from, contact: { phone_number: phone, first_name: 'Айбек', user_id: TG } },
+      } as Update);
+    await contact('996700555222');
+    expect((await testPrisma.user.findUniqueOrThrow({ where: { id: existing.id } })).telegramId).toBeNull();
+    expect(sent().at(-1)).toContain('код в WhatsApp');
+
+    await text('000000');
+    expect(sent().at(-1)).toContain('Код неверный');
+    await contact('996700555222'); // new code (gap) is rate limited → resend after the gap in real life
+    const code = /(\d{6})/.exec(getSentMessages().find((m) => m.phone === '+996700555222')!.text)![1]!;
+    await testPrisma.botSession.update({
+      where: { telegramId: BigInt(TG) },
+      data: { data: { flow: 'link', step: 'code', phone: '+996700555222' } },
+    });
+    await testPrisma.otpCode.updateMany({ where: { phone: '+996700555222' }, data: { attempts: 0 } });
+    await text(code);
+    expect((await testPrisma.user.findUniqueOrThrow({ where: { id: existing.id } })).telegramId).toBe(BigInt(TG));
+  });
+
+  it('a stale «any date» button cannot corrupt a publish draft', async () => {
+    const u = await linkedUser('driver');
+    await text('➕ Опубликовать поездку');
+    await press(`pl:${CITY['Бишкек']}`);
+    await press(`pl:${CITY['Нарын']}`);
+    await press('d:any'); // from an old search message
+    const draft = await testPrisma.botSession.findUniqueOrThrow({ where: { telegramId: BigInt(TG) } });
+    expect((draft.data as { date?: unknown }).date).toBeUndefined();
+    expect(await testPrisma.trip.count({ where: { driverId: u.id } })).toBe(0);
   });
 
   it('refuses a forwarded foreign contact', async () => {

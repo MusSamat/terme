@@ -223,7 +223,21 @@ export function toFileUrl(relPath: string | null | undefined): string | null {
 
 /** Mounted before express.static: private files need a valid, unexpired signature. */
 export const privateFileGuard: RequestHandler = (req, res, next) => {
-  const relPath = decodeURIComponent(req.path).replace(/^\/+/, '');
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(req.path);
+  } catch {
+    res.status(404).end();
+    return;
+  }
+  // Judge the path express.static will actually serve: dot segments and encoded
+  // separators (/avatars/..%2fselfie/…) must not smuggle a private file out.
+  const normalized = path.posix.normalize(decoded);
+  if (normalized !== decoded || decoded.includes('\\') || decoded.includes('%')) {
+    res.status(404).end();
+    return;
+  }
+  const relPath = normalized.replace(/^\/+/, '');
   if (!isPrivate(relPath)) return next();
   const exp = Number(req.query['exp']);
   const sig = typeof req.query['sig'] === 'string' ? req.query['sig'] : '';

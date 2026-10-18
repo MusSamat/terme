@@ -40,6 +40,13 @@ describe('private uploads', () => {
     expect((await request(app()).get(`/${DOC}?exp=1&sig=abc`)).status).toBe(404);
   });
 
+  it('dot segments / encoded separators cannot smuggle a document out', async () => {
+    for (const p of [`/avatars/..%2f${DOC}`, `/%2e/${DOC}`, `/./${DOC}`, `/avatars/../${DOC}`, '/%E0']) {
+      const res = await request(app()).get(p);
+      expect(res.status, p).toBe(404);
+    }
+  });
+
   it('avatars stay public', async () => {
     expect(toFileUrl(AVATAR)).toBe(`${env.BASE_URL}/${AVATAR}`);
     expect((await request(app()).get(`/${AVATAR}`)).status).toBe(200);

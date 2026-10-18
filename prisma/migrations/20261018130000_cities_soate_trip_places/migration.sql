@@ -2308,6 +2308,7 @@ CREATE TEMP TABLE name_map AS
            c.priority DESC, c.id;
 
 -- Names the directory doesn't know (typos, retired places): closest by trigram.
+-- Each one is reported in the deploy log for a manual check.
 INSERT INTO name_map (name, city_id)
   SELECT u.name, (
     SELECT c.id FROM cities_new c WHERE c.is_searchable
@@ -2315,6 +2316,18 @@ INSERT INTO name_map (name, city_id)
     LIMIT 1)
   FROM used_names u
   WHERE NOT EXISTS (SELECT 1 FROM name_map m WHERE m.name = u.name);
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT m.name, c.name_ru, similarity(kg_fold(c.name_ru), kg_fold(m.name)) AS sim
+    FROM name_map m JOIN cities_new c ON c.id = m.city_id
+    WHERE kg_fold(c.name_ru) <> kg_fold(m.name) AND kg_fold(c.name_kg) <> kg_fold(m.name)
+      AND NOT kg_fold(m.name) = ANY (SELECT kg_fold(a) FROM unnest(c.aliases) a)
+  LOOP
+    RAISE NOTICE 'place name "%" mapped by similarity to "%" (%.2f) — please check', r.name, r.name_ru, r.sim;
+  END LOOP;
+END $$;
 
 -- ─── 3. Trips ────────────────────────────────────────────────────────
 DROP INDEX IF EXISTS "idx_trips_route_day_unique";
@@ -2444,6 +2457,28 @@ CREATE INDEX "idx_trips_active_search"
   ON "trips" ("origin_city_id", "destination_city_id", "departure_at") WHERE "status" = 'active';
 CREATE INDEX "idx_trips_active_destination"
   ON "trips" ("destination_city_id", "departure_at") WHERE "status" = 'active';
+-- Two old spellings (Джалал- / Жалал-Абад) can now be the same place: keep the
+-- newest active trip / open request per driver + route + day, cancel the rest.
+WITH dup AS (
+  SELECT id, row_number() OVER (
+    PARTITION BY driver_id, origin_city_id, destination_city_id, (departure_at AT TIME ZONE 'Asia/Bishkek')::date
+    ORDER BY created_at DESC, id) AS rn
+  FROM trips WHERE status = 'active'
+), gone AS (
+  UPDATE trips t SET status = 'cancelled', cancelled_reason = 'duplicate_route_day (directory migration)'
+  FROM dup WHERE t.id = dup.id AND dup.rn > 1
+  RETURNING t.id
+)
+UPDATE bookings b SET status = 'cancelled_by_driver', cancelled_by = 'driver', cancelled_at = NOW()
+  FROM gone WHERE b.trip_id = gone.id AND b.status IN ('pending', 'viewed', 'accepted');
+WITH dup AS (
+  SELECT id, row_number() OVER (
+    PARTITION BY passenger_id, origin_city_id, destination_city_id, (departure_date AT TIME ZONE 'Asia/Bishkek')::date
+    ORDER BY created_at DESC, id) AS rn
+  FROM passenger_requests WHERE status = 'open'
+)
+UPDATE passenger_requests r SET status = 'cancelled' FROM dup WHERE r.id = dup.id AND dup.rn > 1;
+
 CREATE UNIQUE INDEX "idx_trips_route_day_unique"
   ON "trips" ("driver_id", "origin_city_id", "destination_city_id",
               ((departure_at AT TIME ZONE 'Asia/Bishkek')::date))

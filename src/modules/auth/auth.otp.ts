@@ -57,7 +57,10 @@ function normalizeTelegramPhone(raw: string): string {
 
 export type TelegramContactOutcome =
   | { status: 'ok'; userId: string; created: boolean }
-  | { status: 'blocked' };
+  | { status: 'blocked' }
+  // The number already belongs to a web / mobile account this Telegram isn't
+  // linked to — mobile numbers get recycled, so prove it with a WhatsApp code.
+  | { status: 'needs_otp'; phone: string };
 
 /**
  * Telegram bot sign-in: the user tapped «Поделиться номером» (request_contact)
@@ -66,8 +69,9 @@ export type TelegramContactOutcome =
  * contact.user_id === from.id before calling this.
  *
  * Links the Telegram id to the account that owns the phone (web/mobile account)
- * or creates a new account. A Telegram id moves to the phone owner if it was
- * previously attached to another (stale) account.
+ * or creates a new account. Linking to an EXISTING account that isn't already
+ * this Telegram's needs `otpVerified` (a WhatsApp code to that number). A
+ * Telegram id moves to the phone owner if it was attached to another account.
  */
 export async function linkTelegramContact(
   prisma: PrismaClient,
@@ -75,6 +79,7 @@ export async function linkTelegramContact(
   phoneRaw: string,
   firstName: string | undefined,
   langCode: string | undefined,
+  otpVerified = false,
 ): Promise<TelegramContactOutcome> {
   const tgId = BigInt(telegramId);
   const phone = normalizeTelegramPhone(phoneRaw);
@@ -82,6 +87,7 @@ export async function linkTelegramContact(
   return prisma.$transaction(async (tx) => {
     const owner = await tx.user.findFirst({ where: { phone, deletedAt: null } });
     if (owner?.isBlocked) return { status: 'blocked' as const };
+    if (owner && owner.telegramId !== tgId && !otpVerified) return { status: 'needs_otp' as const, phone };
 
     const holder = await tx.user.findFirst({ where: { telegramId: tgId } });
     if (holder && holder.id !== owner?.id) {
@@ -143,12 +149,19 @@ export function createOtpMethods(prisma: PrismaClient) {
     }
     if (recent.usedAt) throw Errors.otpWrong();
     if (recent.expiresAt.getTime() <= now.getTime()) throw Errors.otpExpired();
-    const match = await password.verify(code, recent.codeHash);
-    if (!match) {
-      await prisma.otpCode.update({ where: { id: recent.id }, data: { attempts: { increment: 1 } } });
-      throw Errors.otpWrong();
-    }
-    await prisma.otpCode.update({ where: { id: recent.id }, data: { usedAt: now, attempts: { increment: 1 } } });
+    // Count the attempt atomically BEFORE verifying: parallel guesses can't all
+    // slip under the cap, and a code can be consumed only once.
+    const claimed = await prisma.otpCode.updateMany({
+      where: { id: recent.id, usedAt: null, attempts: { lt: OTP_MAX_ATTEMPTS } },
+      data: { attempts: { increment: 1 } },
+    });
+    if (claimed.count !== 1) throw Errors.otpTooManyAttempts();
+    if (!(await password.verify(code, recent.codeHash))) throw Errors.otpWrong();
+    const used = await prisma.otpCode.updateMany({
+      where: { id: recent.id, usedAt: null },
+      data: { usedAt: now },
+    });
+    if (used.count !== 1) throw Errors.otpWrong();
   }
 
   // Mobile login of an EXISTING account by phone + WhatsApp code. New phones
@@ -180,9 +193,15 @@ export function createOtpMethods(prisma: PrismaClient) {
       : {};
     const user = await prisma.$transaction(async (tx) => {
       const existing = await tx.user.findFirst({ where: { phone, deletedAt: null } });
+      if (existing?.isBlocked) throw Errors.forbidden({ reason: 'blocked' });
       if (existing) {
         // Number already has an account (e.g. created from the Telegram bot):
         // the fresh code proves ownership, so complete the profile and log in.
+        // Other sessions must not survive a credential change.
+        await tx.refreshToken.updateMany({
+          where: { userId: existing.id, revokedAt: null },
+          data: { revokedAt: now },
+        });
         return tx.user.update({
           where: { id: existing.id },
           data: {

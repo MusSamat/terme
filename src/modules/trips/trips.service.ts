@@ -382,6 +382,10 @@ export function createTripsService(
     if (fromId !== null && fromId === toId) {
       throw Errors.validation({ reason: 'cities_must_differ' });
     }
+    // Offset cursors belong to sort=nearest, id cursors to every other sort.
+    if (query.cursor && query.cursor.startsWith('o_') !== (query.sort === 'nearest')) {
+      throw Errors.validation({ reason: 'cursor_sort_mismatch' });
+    }
     // "nb_" cursor prefix = the first page fell back to the nearby (radius)
     // tier; later pages keep that expanded filter (the cursor is opaque).
     let nearby = false;
