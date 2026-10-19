@@ -3,6 +3,8 @@ import { CITY } from '../../../tests/cities.js';
 import { testPrisma } from '../../../tests/setup.js';
 import { autoCompleteTripsJob } from './autoCompleteTrips.js';
 import { createUser, createVerifiedDriver } from '../../../tests/factories.js';
+import request from 'supertest';
+import { createApp } from '@/server.js';
 
 describe('auto_complete_trips cron', () => {
   beforeEach(() => {
@@ -78,5 +80,48 @@ describe('auto_complete_trips cron', () => {
     await autoCompleteTripsJob.run(testPrisma);
     const count = await testPrisma.notification.count();
     expect(count).toBe(0);
+  });
+});
+
+describe('loyalty farming guard (M8)', () => {
+  async function emptyPastTrip(driverId: string) {
+    return testPrisma.trip.create({
+      data: {
+        driverId,
+        originCity: 'Бишкек', originCityId: CITY['Бишкек'],
+        destinationCity: 'Токмок', destinationCityId: CITY['Токмок'],
+        originAddress: 'x',
+        departureAt: new Date(Date.now() - 5 * 60 * 60_000),
+        estimatedDurationMin: 60,
+        seatsTotal: 3,
+        seatsAvailable: 3,
+        pricePerSeat: 300,
+        luggage: 'no',
+        status: 'active',
+      },
+    });
+  }
+
+  it('auto-complete of a trip nobody rode awards no points / totalTrips', async () => {
+    const d = await createVerifiedDriver(testPrisma, { plate: 'ACF1' });
+    const trip = await emptyPastTrip(d.id);
+    await autoCompleteTripsJob.run(testPrisma);
+    expect((await testPrisma.trip.findUniqueOrThrow({ where: { id: trip.id } })).status).toBe('completed');
+    const dp = await testPrisma.driverProfile.findUniqueOrThrow({ where: { userId: d.id } });
+    expect(dp.totalTrips).toBe(0);
+    expect(await testPrisma.loyaltyTransaction.count({ where: { userId: d.id } })).toBe(0);
+  });
+
+  it('manual complete of an empty trip awards nothing either', async () => {
+    const d = await createVerifiedDriver(testPrisma, { plate: 'ACF2' });
+    const trip = await emptyPastTrip(d.id);
+    const res = await request(createApp(testPrisma))
+      .patch(`/v1/trips/${trip.id}/complete`)
+      .set('Authorization', `Bearer ${d.accessToken}`);
+    expect(res.status).toBe(200);
+    const user = await testPrisma.user.findUniqueOrThrow({ where: { id: d.id } });
+    expect(user.loyaltyPoints).toBe(0);
+    const dp = await testPrisma.driverProfile.findUniqueOrThrow({ where: { userId: d.id } });
+    expect(dp.totalTrips).toBe(0);
   });
 });

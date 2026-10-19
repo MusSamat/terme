@@ -87,7 +87,8 @@ export const autoCompleteTripsJob: Job = {
       }
     }
 
-    // Award loyalty points (and bump driver totalTrips) for all participants.
+    // Award loyalty points (and bump driver totalTrips) for all participants —
+    // only when at least one passenger completed (M8: empty trips earn nothing).
     // Each trip's awards run in one transaction so a crash can't half-apply.
     // awardTripCompletion is idempotent via the (userId, tripId, source) UNIQUE,
     // so a re-run or a race with manual complete() never double-awards.
@@ -99,6 +100,7 @@ export const autoCompleteTripsJob: Job = {
         SELECT passenger_id AS user_id FROM bookings
           WHERE trip_id = ${tripId}::uuid AND status = 'completed'
       `;
+      if (!participants.some((p) => p.user_id !== driver_id)) continue;
 
       await prisma.$transaction(async (tx) => {
         for (const { user_id } of participants) {

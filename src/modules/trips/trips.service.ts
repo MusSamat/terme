@@ -933,8 +933,12 @@ export function createTripsService(
       const passengers = bookings.map((b) => b.passengerId);
       // Loyalty awards inside the same tx — idempotent via the (user,trip,source)
       // UNIQUE, and atomic with the completion so a crash can't half-apply.
-      for (const userId of [driverUserId, ...passengers]) {
-        await awardTripCompletion(tx, userId, id, POINTS_PER_TRIP);
+      // M8: an empty trip earns nothing — no points / totalTrips farming by
+      // publishing and completing trips nobody rode.
+      if (passengers.length > 0) {
+        for (const userId of [driverUserId, ...passengers]) {
+          await awardTripCompletion(tx, userId, id, POINTS_PER_TRIP);
+        }
       }
       return passengers;
     });
