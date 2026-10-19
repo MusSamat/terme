@@ -1,4 +1,4 @@
-import type { PrismaClient, User } from '@prisma/client';
+import type { User } from '@prisma/client';
 import { InlineKeyboard, type Context } from 'grammy';
 import type { BookingDTO } from '@/modules/bookings/bookings.service.js';
 import type { TripListItem } from '@/modules/trips/trips.service.js';
@@ -11,7 +11,7 @@ const SECTION_LIMIT = 10; // cards per section — keeps the chat readable
 
 // «Мои»: an overview with one button per non-empty section, then cards with
 // one-tap actions (cancel / accept / decline). Actions live in my.actions.ts.
-export function createMy(prisma: PrismaClient, svc: BotServices) {
+export function createMy(svc: BotServices) {
   async function load(user: User) {
     const [bookings, requests, active, inTransit] = await Promise.all([
       svc.bookings().listMy(user.id, { limit: 50 }),
@@ -51,18 +51,12 @@ export function createMy(prisma: PrismaClient, svc: BotServices) {
     const data = await load(user);
     if (which === 'b') return render(ctx, l, data.bookings.map((b) => bookingCard(b, l)));
     if (which === 'r') {
-      const counts = await prisma.passengerRequestResponse.groupBy({
-        by: ['requestId'],
-        where: { requestId: { in: data.requests.map((r) => r.id) }, status: 'pending' },
-        _count: { _all: true },
-      });
-      const offers = new Map(counts.map((c) => [c.requestId, c._count._all]));
       return render(
         ctx,
         l,
         data.requests.map((r) => {
           const kb = new InlineKeyboard();
-          const n = offers.get(r.id) ?? 0;
+          const n = r.pendingResponsesCount;
           if (n > 0) kb.text(TEXTS[l].offers(n), `of:${r.id}`).row();
           kb.text(TEXTS[l].cancelRequest, `cr:${r.id}`);
           const route = `${escapeHtml(placeName(r.origin, l))} → ${escapeHtml(placeName(r.destination, l))}`;
@@ -94,7 +88,7 @@ function bookingCard(b: BookingDTO, l: Lang): [string, InlineKeyboard] {
   if (phone) kb.url(t.writeWhatsapp, waLink(phone)).row();
   kb.text(t.cancelBooking, `cb:${b.id}`);
   const text = [
-    `🎫 <b>${escapeHtml(b.trip.originCity)} → ${escapeHtml(b.trip.destinationCity)}</b>`,
+    `🎫 <b>${escapeHtml(placeName(b.trip.origin, l))} → ${escapeHtml(placeName(b.trip.destination, l))}</b>`,
     `🕒 ${formatWhen(b.trip.departureAt, l)} · 💺 ${b.seatsCount} · 💰 ${b.pricePerSeatSnapshot} ${t.som}`,
     t.personLine(escapeHtml(b.trip.driver.name), phone),
     t.bookingStatus[b.status] ?? b.status,

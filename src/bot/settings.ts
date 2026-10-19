@@ -1,11 +1,11 @@
-import type { PrismaClient, User } from '@prisma/client';
+import type { User } from '@prisma/client';
 import { InlineKeyboard, type Context } from 'grammy';
 import { showMenu, type BotServices } from './context.js';
 import { TEXTS, langOf } from './texts.js';
 import { HTML } from './format.js';
 
 // «Настройки»: language and notifications, toggled in place on one message.
-export function createSettings(prisma: PrismaClient, svc: BotServices) {
+export function createSettings(svc: BotServices) {
   function view(user: User) {
     const t = TEXTS[langOf(user.language)];
     return {
@@ -29,11 +29,9 @@ export function createSettings(prisma: PrismaClient, svc: BotServices) {
       await svc.users.updateSelf(user.id, { language });
       updated = { ...user, language };
     } else {
-      // No users-service method covers this flag yet — direct update.
-      updated = await prisma.user.update({
-        where: { id: user.id },
-        data: { notificationsEnabled: !user.notificationsEnabled },
-      });
+      const notificationsEnabled = !user.notificationsEnabled;
+      await svc.users.updateSelf(user.id, { notificationsEnabled });
+      updated = { ...user, notificationsEnabled };
     }
     const { text, markup } = view(updated);
     await ctx.editMessageText(text, { ...HTML, reply_markup: markup }).catch(() => undefined);

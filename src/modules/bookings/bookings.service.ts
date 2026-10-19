@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { Errors, publicPhone } from '@/lib/errors.js';
 import { toFileUrl } from '@/lib/uploads.js';
+import { placeSelect, toPlaceRef, type PlaceRef } from '@/lib/places.js';
 import { cursorArgs, sliceAndNext } from '@/lib/pagination.js';
 import { bishkekDayRange } from '@/lib/dates.js';
 import { logger } from '@/lib/logger.js';
@@ -49,6 +50,11 @@ export interface BookingDTO extends PublicBooking {
     };
     seatsAvailable: number;
     pricePerSeat: number;
+    // Place ids + RU/KG names (originCity/destinationCity are name_ru snapshots).
+    originCityId: number;
+    destinationCityId: number;
+    origin: PlaceRef;
+    destination: PlaceRef;
   };
   pricePerSeatSnapshot: number;
   passenger: {
@@ -698,6 +704,10 @@ const bookingDTOInclude = {
       seatsAvailable: true,
       pricePerSeat: true,
       completedAt: true,
+      originCityId: true,
+      destinationCityId: true,
+      origin: { select: placeSelect },
+      destination: { select: placeSelect },
       driver: {
         select: {
           id: true,
@@ -748,6 +758,10 @@ function mapBookingDTO(row: BookingRowWithRelations): BookingDTO {
       departureAt: row.trip.departureAt,
       seatsAvailable: row.trip.seatsAvailable,
       pricePerSeat: row.trip.pricePerSeat,
+      originCityId: row.trip.originCityId,
+      destinationCityId: row.trip.destinationCityId,
+      origin: toPlaceRef(row.trip.origin),
+      destination: toPlaceRef(row.trip.destination),
       driver: {
         id: row.trip.driver.id,
         name: row.trip.driver.name,

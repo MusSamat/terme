@@ -55,6 +55,7 @@ export interface UpdateSelfPatch {
   bio?: string;
   termsAccepted?: true;
   preferredMode?: 'passenger' | 'driver';
+  notificationsEnabled?: boolean;
 }
 
 export interface UsersService {
@@ -146,6 +147,7 @@ export function createUsersService(prisma: PrismaClient): UsersService {
     if (patch.language !== undefined) data.language = patch.language;
     if (patch.bio !== undefined) data.bio = patch.bio.length > 0 ? patch.bio : null;
     if (patch.termsAccepted === true) data.termsAcceptedAt = new Date();
+    if (patch.notificationsEnabled !== undefined) data.notificationsEnabled = patch.notificationsEnabled;
     const updated = await prisma.user.update({ where: { id: userId }, data });
     return toSelf(updated);
   }

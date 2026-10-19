@@ -67,6 +67,11 @@ export interface PassengerRequestDTO extends PassengerRequestCardItem {
   metrics: { views: number; likes: number; contacts: number };
 }
 
+// Owner list (GET /passenger-requests/my): + offers still awaiting a decision.
+export interface MyPassengerRequestDTO extends PassengerRequestDTO {
+  pendingResponsesCount: number;
+}
+
 const RATING_VISIBLE_AFTER = 3;
 // A meeting-point pin must lie within this distance of its settlement.
 const POINT_MAX_KM = 30;
@@ -376,7 +381,7 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
     };
   }
 
-  async function listMy(passengerId: string): Promise<{ data: PassengerRequestDTO[]; nextCursor: string | null }> {
+  async function listMy(passengerId: string): Promise<{ data: MyPassengerRequestDTO[]; nextCursor: string | null }> {
     // Bound the query so a heavy user can't pull an unbounded result set. Fetch
     // one extra to detect a further page, then expose a cursor (created-at desc,
     // keyed on id) without changing the response shape.
@@ -389,11 +394,22 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
     });
     const hasMore = rows.length > LIMIT;
     const slice = hasMore ? rows.slice(0, LIMIT) : rows;
-    const likedSet = await engagement.likedIds('passenger_request', slice.map((r) => r.id), passengerId);
+    const [likedSet, pending] = await Promise.all([
+      engagement.likedIds('passenger_request', slice.map((r) => r.id), passengerId),
+      prisma.passengerRequestResponse.groupBy({
+        by: ['requestId'],
+        where: { requestId: { in: slice.map((r) => r.id) }, status: 'pending' },
+        _count: { _all: true },
+      }),
+    ]);
+    const pendingBy = new Map(pending.map((c) => [c.requestId, c._count._all]));
     return {
       // Owner list feeds the lean request card too — no metrics rendered, so no
       // contactReveal groupBy. Full detail is fetched on open.
-      data: slice.map((r) => toDTO(r, { liked: likedSet.has(r.id), myResponse: null })),
+      data: slice.map((r) => ({
+        ...toDTO(r, { liked: likedSet.has(r.id), myResponse: null }),
+        pendingResponsesCount: pendingBy.get(r.id) ?? 0,
+      })),
       nextCursor: hasMore ? slice[slice.length - 1]!.id : null,
     };
   }
@@ -825,5 +841,24 @@ export function createPassengerRequestResponsesService(prisma: PrismaClient, not
     await notifier.requestResponseDeclined(response.driverId, { responseId, requestId });
   }
 
-  return { respond, listResponses, acceptResponse, declineResponse };
+  // Response-id-only variants (Telegram callback_data fits a single uuid). The
+  // request id is derived; ownership and state are checked by the delegates.
+  async function requestIdOf(responseId: string): Promise<string> {
+    const r = await prisma.passengerRequestResponse.findUnique({
+      where: { id: responseId },
+      select: { requestId: true },
+    });
+    if (!r) throw Errors.notFound('Response');
+    return r.requestId;
+  }
+
+  async function acceptResponseById(passengerId: string, responseId: string): Promise<{ bookingId: string }> {
+    return acceptResponse(passengerId, await requestIdOf(responseId), responseId);
+  }
+
+  async function declineResponseById(passengerId: string, responseId: string): Promise<void> {
+    return declineResponse(passengerId, await requestIdOf(responseId), responseId);
+  }
+
+  return { respond, listResponses, acceptResponse, declineResponse, acceptResponseById, declineResponseById };
 }

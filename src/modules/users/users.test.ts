@@ -51,6 +51,16 @@ describe('PATCH /v1/users/me', () => {
     expect(res.body.termsAcceptedAt).not.toBeNull();
   });
 
+  it('toggles notificationsEnabled', async () => {
+    const u = await createUser(testPrisma);
+    const res = await request(app)
+      .patch('/v1/users/me')
+      .set('Authorization', `Bearer ${u.accessToken}`)
+      .send({ notificationsEnabled: false });
+    expect(res.status).toBe(200);
+    expect(res.body.notificationsEnabled).toBe(false);
+  });
+
   it('rejects invalid language', async () => {
     const u = await createUser(testPrisma);
     const res = await request(app)

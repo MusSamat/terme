@@ -8,6 +8,7 @@ export const UpdateMeBody = z.object({
   bio: z.string().trim().max(300).optional(),
   // avatar_url is never set directly — use POST /users/avatar instead.
   termsAccepted: z.literal(true).optional(),
+  notificationsEnabled: z.boolean().optional(),
 });
 
 export const UserIdParam = z.object({

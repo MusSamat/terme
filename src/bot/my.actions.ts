@@ -1,4 +1,4 @@
-import type { PrismaClient, User } from '@prisma/client';
+import type { User } from '@prisma/client';
 import { InlineKeyboard, type Context } from 'grammy';
 import { logger } from '@/lib/logger.js';
 import type { BotServices } from './context.js';
@@ -16,7 +16,7 @@ const ASK: Record<string, { confirm: string; question: 'askCancelBooking' | 'ask
 const rated = (r: number | null): string => (r ? ` ★${r.toFixed(1)}` : '');
 
 /** Buttons on «Мои» cards and on notifications (accept / decline / cancel). */
-export function createMyActions(prisma: PrismaClient, svc: BotServices) {
+export function createMyActions(svc: BotServices) {
   // Result text + the counterpart's contact (phone is visible once accepted).
   async function replyWithContact(ctx: Context, l: Lang, text: string, name: string, phone: string | null | undefined) {
     const kb = phone ? new InlineKeyboard().url(TEXTS[l].writeWhatsapp, waLink(phone)) : undefined;
@@ -102,16 +102,14 @@ export function createMyActions(prisma: PrismaClient, svc: BotServices) {
         return true;
       case 'oa':
       case 'od': {
-        // callback_data fits one uuid only — the request id is looked up.
-        const resp = await prisma.passengerRequestResponse.findUnique({ where: { id }, select: { requestId: true } });
-        if (!resp) return false;
+        // callback_data fits one uuid only — the *ById variants derive the request.
         await ctx.editMessageReplyMarkup().catch(() => undefined);
         if (key === 'od') {
-          await svc.responses().declineResponse(user.id, resp.requestId, id);
+          await svc.responses().declineResponseById(user.id, id);
           await ctx.reply(t.offerDeclined);
           return true;
         }
-        const { bookingId } = await svc.responses().acceptResponse(user.id, resp.requestId, id);
+        const { bookingId } = await svc.responses().acceptResponseById(user.id, id);
         const b = await svc.bookings().getById(bookingId, user.id);
         await replyWithContact(ctx, l, t.offerAccepted, b.trip.driver.name, b.trip.driver.phone);
         return true;

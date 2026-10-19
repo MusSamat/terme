@@ -32,9 +32,9 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
   const svc = createBotServices(deps);
   const flows = createFlows(svc);
   const listing = createListing(svc, flows);
-  const my = createMy(prisma, svc);
-  const myActions = createMyActions(prisma, svc);
-  const settings = createSettings(prisma, svc);
+  const my = createMy(svc);
+  const myActions = createMyActions(svc);
+  const settings = createSettings(svc);
   const otp = createOtpMethods(prisma);
 
   await bot.api

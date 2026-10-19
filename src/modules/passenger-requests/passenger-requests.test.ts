@@ -10,6 +10,8 @@ import {
   seedLaunchCities,
 } from '../../../tests/factories.js';
 import { NoopNotifier } from '@/lib/notifier.js';
+import { createPassengerRequestResponsesService } from './passenger-requests.service.js';
+import crypto from 'node:crypto';
 
 let app: Express;
 let notifier: NoopNotifier;
@@ -722,5 +724,32 @@ describe('GET /v1/passenger-requests — blocked owners', () => {
     const res = await request(app).get('/v1/passenger-requests');
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(0);
+  });
+});
+
+describe('Owner list + response-id-only actions', () => {
+  const offer = () => ({ price: 1000, departureTime: new Date(Date.now() + 28 * 60 * 60_000).toISOString() });
+
+  it('GET /my carries pendingResponsesCount; acceptResponseById derives the request', async () => {
+    const p = await createUser(testPrisma);
+    const d1 = await createVerifiedDriver(testPrisma, { plate: 'BY01' });
+    const d2 = await createVerifiedDriver(testPrisma, { plate: 'BY02' });
+    const created = await createRequest(p);
+    for (const d of [d1, d2]) {
+      await request(app)
+        .post(`/v1/passenger-requests/${created.body.id}/respond`)
+        .set('Authorization', `Bearer ${d.accessToken}`)
+        .send(offer())
+        .expect(201);
+    }
+    const my = await request(app).get('/v1/passenger-requests/my').set('Authorization', `Bearer ${p.accessToken}`);
+    expect(my.body.data[0].pendingResponsesCount).toBe(2);
+
+    const responses = createPassengerRequestResponsesService(testPrisma, notifier);
+    const [r1, r2] = await testPrisma.passengerRequestResponse.findMany({ where: { requestId: created.body.id } });
+    await responses.declineResponseById(p.id, r2!.id);
+    const { bookingId } = await responses.acceptResponseById(p.id, r1!.id);
+    expect(bookingId).toBeTruthy();
+    await expect(responses.acceptResponseById(p.id, crypto.randomUUID())).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
