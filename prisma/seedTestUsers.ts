@@ -24,9 +24,10 @@
  * Safe on a DEPLOYED server: unlike seedDemo it does NOT refuse on
  * NODE_ENV=production — the test server runs as production — but it REQUIRES an
  * explicit confirmation flag so it can never fire by accident, and every user it
- * writes is tagged (phone block +9967009xxxxx — the old +99670090xxxx block is
- * its first 10 000 numbers — and name suffix «Test») so --purge removes exactly
- * this data and nothing else.
+ * writes is tagged (phone block +996000NNNNNN — prefix 000 belongs to no KG
+ * operator, so reveal / call / WhatsApp never reach a real person — and name
+ * suffix «Test») so --purge removes exactly this data and nothing else. Purge
+ * also removes the legacy block +99670090NNNN (+ «Test») seeded by older runs.
  *
  *   Seed:  npm run db:seed:test -- --yes [--target 20000] [--users N] [--days N]
  *   Purge: npm run db:seed:test -- --purge --yes
@@ -43,8 +44,10 @@ import { haversineKm } from '../src/lib/places.js';
 const prisma = new PrismaClient();
 
 // ─── Config ────────────────────────────────────────────────────────────
-const PHONE_PREFIX = '+9967009'; // +996 7009 NNNNN — reserved test block
-const PHONE_DIGITS = 5;
+const PHONE_PREFIX = '+996000'; // +996 000 NNNNNN — unassigned, no KG operator
+const PHONE_DIGITS = 6;
+const LEGACY_PHONE_PREFIX = '+99670090'; // older runs: +996 70090 NNNN
+const PHONE_LENGTH = 13; // +996 + 9 digits, both blocks
 const NAME_SUFFIX = 'Test';
 const KG_OFFSET_MS = 6 * 60 * 60_000; // UTC+6, no DST
 const DAY_MS = 24 * 60 * 60_000;
@@ -528,12 +531,13 @@ async function chunked(ids: string[], fn: (part: string[]) => Promise<unknown>, 
 
 async function purge(): Promise<void> {
   const users = await prisma.user.findMany({
-    where: { phone: { startsWith: PHONE_PREFIX }, name: { endsWith: NAME_SUFFIX } },
+    where: {
+      OR: [{ phone: { startsWith: PHONE_PREFIX } }, { phone: { startsWith: LEGACY_PHONE_PREFIX } }],
+      name: { endsWith: NAME_SUFFIX },
+    },
     select: { id: true, phone: true },
   });
-  const userIds = users
-    .filter((u) => u.phone.length === PHONE_PREFIX.length + PHONE_DIGITS)
-    .map((u) => u.id);
+  const userIds = users.filter((u) => u.phone.length === PHONE_LENGTH).map((u) => u.id);
   if (userIds.length === 0) {
     console.warn('[test-seed] no test users found — nothing to purge.');
     return;
