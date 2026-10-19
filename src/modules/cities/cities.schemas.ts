@@ -45,3 +45,15 @@ export const MapQuery = z.object({
   date: z.string().datetime({ offset: true }).optional(),
 });
 export type MapQueryInput = z.infer<typeof MapQuery>;
+
+// Every active listing of one route for the «Карта» tab (no viewport, no clustering).
+export const MapRouteQuery = z
+  .object({
+    kind: z.enum(['trips', 'requests']),
+    from_id: PlaceId,
+    to_id: PlaceId,
+    ride: z.enum(['intercity', 'airport']).optional(),
+    date: z.string().datetime({ offset: true }).optional(),
+  })
+  .refine((v) => v.from_id !== v.to_id, { message: 'from_id and to_id must differ', path: ['to_id'] });
+export type MapRouteQueryInput = z.infer<typeof MapRouteQuery>;

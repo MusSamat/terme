@@ -1262,6 +1262,77 @@ export const openapiDocument = {
       },
     },
 
+    '/map/route': {
+      get: {
+        tags: ['Map'],
+        summary: 'Every active listing of one route (route-first «Список | Карта» screen)',
+        description:
+          'No viewport, no clustering: all trips / passenger requests from from_id to to_id, ordered by '
+          + 'departure, capped at 500 (truncated=true when more exist). Same visibility as GET /trips and '
+          + 'GET /passenger-requests (trips also match pickup / drop-off stops); when the exact places have '
+          + 'nothing, nearby settlements (25 km) are used and nearby=true. lat/lng is the meeting pin '
+          + '(exact=true) or the origin settlement — never null.',
+        security: [],
+        parameters: [
+          { name: 'kind', in: 'query', required: true, schema: { type: 'string', enum: ['trips', 'requests'] } },
+          { name: 'from_id', in: 'query', required: true, schema: { type: 'integer' } },
+          { name: 'to_id', in: 'query', required: true, schema: { type: 'integer' }, description: 'Must differ from from_id' },
+          { name: 'date', in: 'query', schema: { type: 'string', format: 'date-time' }, description: 'Asia/Bishkek calendar day' },
+          { name: 'ride', in: 'query', schema: { type: 'string', enum: ['intercity', 'airport'] } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['kind', 'items', 'truncated', 'nearby'],
+                  properties: {
+                    kind: { type: 'string', enum: ['trips', 'requests'] },
+                    truncated: { type: 'boolean' },
+                    nearby: { type: 'boolean' },
+                    items: {
+                      type: 'array',
+                      maxItems: 500,
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string', format: 'uuid' },
+                          kind: { type: 'string', enum: ['trip', 'request'] },
+                          lat: { type: 'number' },
+                          lng: { type: 'number' },
+                          exact: { type: 'boolean', description: 'false = origin settlement point' },
+                          departureAt: { type: 'string', format: 'date-time' },
+                          seatsFree: { type: 'integer', nullable: true, description: 'Trips only' },
+                          passengers: { type: 'integer', nullable: true, description: 'Requests only' },
+                          price: { type: 'integer', nullable: true, description: 'Per seat; null for requests' },
+                          origin: { type: 'object', properties: { id: { type: 'integer' }, nameRu: { type: 'string' }, nameKg: { type: 'string' } } },
+                          destination: { type: 'object', properties: { id: { type: 'integer' }, nameRu: { type: 'string' }, nameKg: { type: 'string' } } },
+                          user: {
+                            type: 'object',
+                            description: 'Driver (trips) or passenger (requests)',
+                            properties: {
+                              id: { type: 'string', format: 'uuid' },
+                              name: { type: 'string' },
+                              avatarUrl: { type: 'string', nullable: true },
+                              rating: { type: 'number', nullable: true, description: 'null until 3 ratings' },
+                              ratingCount: { type: 'integer' },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          ...errorResponses,
+        },
+      },
+    },
+
     // ─── Drivers ────────────────────────────────────────────────────
     '/drivers/verification': {
       post: {

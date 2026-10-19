@@ -29,6 +29,7 @@ exports[`OpenAPI drift-guard > API surface (METHOD + path) matches the snapshot 
   "GET /drivers/verification/status",
   "GET /health",
   "GET /map",
+  "GET /map/route",
   "GET /notifications",
   "GET /ratings/pending",
   "GET /routes/price-suggestion",
