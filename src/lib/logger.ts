@@ -35,3 +35,8 @@ export const logger = pino({
 });
 
 export type Logger = typeof logger;
+
+/** Phones in logs: keep only the last 4 digits (e.g. "***4567"). */
+export function maskPhone(phone: string): string {
+  return phone.length > 4 ? `***${phone.slice(-4)}` : '***';
+}

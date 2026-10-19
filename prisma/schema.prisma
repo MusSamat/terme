@@ -346,10 +346,13 @@ model OtpCode {
   attempts  Int       @default(0) @db.SmallInt
   expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
   usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  // M5: requester IP (NULL for bot-initiated sends) — daily cap is per (phone, ip).
+  requestIp String?   @map("request_ip") @db.VarChar(45)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([phone, createdAt])
   @@index([expiresAt])
+  @@index([createdAt]) // H1: global / foreign daily OTP budget counts
   @@map("otp_codes")
 }
 

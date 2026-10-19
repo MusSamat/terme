@@ -88,6 +88,7 @@ export const openapiDocument = {
                   'OTP_TOO_MANY_ATTEMPTS',
                   'INTERNAL_ERROR',
                   'SERVICE_UNAVAILABLE',
+                  'OTP_BUDGET_EXCEEDED',
                 ],
               },
               message: { type: 'string' },
@@ -570,6 +571,10 @@ export const openapiDocument = {
             },
           },
           ...errorResponses,
+          '503': {
+            description: 'OTP_BUDGET_EXCEEDED — daily OTP budget (global or non-+996) spent',
+            content: jsonError,
+          },
         },
       },
     },

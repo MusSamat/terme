@@ -24,9 +24,7 @@ type BuildOpts = Pick<Options, 'windowMs' | 'limit'> & {
 };
 
 function build({ name, windowMs, limit, keyGenerator, skipFailedRequests }: BuildOpts): RequestHandler {
-  if (env.RATE_LIMIT_DISABLED) return (_req, _res, next) => next();
-
-  return rateLimit({
+  const limiter = rateLimit({
     windowMs,
     limit,
     standardHeaders: 'draft-7', // RateLimit-* headers (TZ §19.1)
@@ -37,6 +35,8 @@ function build({ name, windowMs, limit, keyGenerator, skipFailedRequests }: Buil
       next(Errors.rateLimited({ bucket: name }));
     },
   });
+  // Checked per request (not at build time) so tests can switch limits on.
+  return (req, res, next) => (env.RATE_LIMIT_DISABLED ? next() : limiter(req, res, next));
 }
 
 // ─── IP-based ─────────────────────────────────────────────────────────
@@ -83,6 +83,9 @@ const phoneKey = (req: Request): string => {
   const body = req.body as { phone?: string; newPhone?: string } | undefined;
   return body?.newPhone ?? body?.phone ?? ipKey(req);
 };
+// M5: daily / verify caps key on (phone, ip) so a stranger can't lock a
+// victim's number out; the DB layer still enforces a per-phone ceiling.
+const phoneIpKey = (req: Request): string => `${phoneKey(req)}|${ipKey(req)}`;
 
 /** TZ §7.3 "POST /auth/phone/send-otp · 1 запрос в минуту на номер". */
 export const sendOtpMinuteLimit = build({
@@ -97,15 +100,36 @@ export const sendOtpDailyLimit = build({
   name: 'otp_send_day',
   windowMs: 24 * 60 * 60_000,
   limit: 5,
-  keyGenerator: phoneKey,
+  keyGenerator: phoneIpKey,
 });
+
+/** H1: per-IP caps on every OTP send (send-otp, phone change) — cost guard. */
+export const sendOtpIpHourLimit = build({
+  name: 'otp_send_ip_hour',
+  windowMs: 60 * 60_000,
+  limit: env.OTP_IP_HOURLY_CAP,
+});
+
+export const sendOtpIpDailyLimit = build({
+  name: 'otp_send_ip_day',
+  windowMs: 24 * 60 * 60_000,
+  limit: env.OTP_IP_DAILY_CAP,
+});
+
+/** All OTP-send limiters in mount order. */
+export const sendOtpLimits: RequestHandler[] = [
+  sendOtpIpHourLimit,
+  sendOtpIpDailyLimit,
+  sendOtpMinuteLimit,
+  sendOtpDailyLimit,
+];
 
 /** TZ §7.3 "POST /auth/phone/verify · 5 попыток на один OTP". */
 export const verifyOtpLimit = build({
   name: 'otp_verify',
   windowMs: 15 * 60_000,
   limit: 5,
-  keyGenerator: phoneKey,
+  keyGenerator: phoneIpKey,
 });
 
 /**

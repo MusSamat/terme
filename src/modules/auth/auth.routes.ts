@@ -20,8 +20,7 @@ import { requireAdmin, requireAuth } from '@/middleware/auth.js';
 import {
   adminLoginLimit,
   authLimit,
-  sendOtpDailyLimit,
-  sendOtpMinuteLimit,
+  sendOtpLimits,
   verifyOtpLimit,
 } from '@/middleware/rateLimit.js';
 import type { Notifier } from '@/lib/notifier.js';
@@ -53,12 +52,11 @@ export function createAuthRouter(prisma: PrismaClient, notifier: Notifier): Rout
 
   router.post(
     '/phone/send-otp',
-    sendOtpMinuteLimit,
-    sendOtpDailyLimit,
+    ...sendOtpLimits,
     validate({ body: SendOtpBody }),
     asyncHandler(async (req, res) => {
       const { phone } = req.body as { phone: string };
-      res.status(200).json(await service.sendOtp(phone));
+      res.status(200).json(await service.sendOtp(phone, req.ip ?? null));
     }),
   );
 

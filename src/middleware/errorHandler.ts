@@ -55,6 +55,21 @@ export const globalErrorHandler: ErrorRequestHandler = (err, req, res, _next) =>
     details: appError.details,
   };
 
+  // Abuse signal: every 429 (route limiter or service-level cap) is one
+  // structured event, so scrapers / OTP pumpers can be spotted in the logs.
+  if (appError.httpStatus === 429) {
+    const d = appError.details ?? {};
+    logger.warn(
+      {
+        event: 'abuse.limit_hit',
+        userId: req.user?.id,
+        ip: req.ip,
+        limiter: d.bucket ?? d.reason ?? appError.code,
+      },
+      'abuse.limit_hit',
+    );
+  }
+
   if (appError.httpStatus >= 500) {
     logger.error(logPayload, 'request failed');
     // Only real faults reach Sentry: every 5xx (whether a deliberate 5xx

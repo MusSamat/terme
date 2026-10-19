@@ -6,7 +6,7 @@ import { LikesQuery, RatingsQuery, UpdateMeBody, UserIdParam } from './users.sch
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { requireAuth } from '@/middleware/auth.js';
-import { sendOtpDailyLimit, sendOtpMinuteLimit } from '@/middleware/rateLimit.js';
+import { sendOtpLimits } from '@/middleware/rateLimit.js';
 import { uploadMemory } from '@/lib/uploads.js';
 import { webRefreshCookie } from '@/lib/cookies.js';
 import { Errors } from '@/lib/errors.js';
@@ -140,12 +140,11 @@ export function createUsersRouter(prisma: PrismaClient, notifier: Notifier): Rou
   router.patch(
     '/me/phone',
     requireAuth,
-    sendOtpMinuteLimit,
-    sendOtpDailyLimit,
+    ...sendOtpLimits,
     validate({ body: StartPhoneChangeBody }),
     asyncHandler(async (req, res) => {
       const { newPhone } = req.body as { newPhone: string };
-      res.json(await auth.startPhoneChange(req.user!.id, newPhone));
+      res.json(await auth.startPhoneChange(req.user!.id, newPhone, req.ip ?? null));
     }),
   );
 

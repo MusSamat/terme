@@ -5,7 +5,7 @@ import { generateOtp, sha256Hex } from '@/lib/random.js';
 import { recordSent } from '@/lib/otpCapture.js';
 import { whatsappEnabled, sendWhatsappOtp } from '@/lib/whatsapp.js';
 import { assertActiveUser } from '@/lib/assertUser.js';
-import { logger } from '@/lib/logger.js';
+import { logger, maskPhone } from '@/lib/logger.js';
 import { env } from '@/config/env.js';
 import type { AuthResult } from './auth.types.js';
 import { issueFullAuthForUser } from './auth.helpers.js';
@@ -18,10 +18,18 @@ import {
   OTP_MIN_GAP_SEC,
 } from './auth.constants.js';
 
-// Persistent per-phone throttle: ≤1 code / OTP_MIN_GAP_SEC and ≤OTP_DAILY_CAP /
-// day. DB-backed so the cost cap survives restarts / multiple instances (the
-// route limiter is only an in-memory safety net).
-async function assertOtpSendAllowed(prisma: PrismaClient, phone: string): Promise<void> {
+const KG_PREFIX = '+996';
+
+// Persistent throttle: ≤1 code / OTP_MIN_GAP_SEC per phone, ≤OTP_DAILY_CAP / day
+// per (phone, ip) and ≤OTP_PHONE_DAILY_CEILING / day per phone. DB-backed so
+// the cost cap survives restarts / multiple instances (the route limiters are
+// only an in-memory safety net). Keying the daily cap on (phone, ip) means a
+// stranger can't burn a victim's quota and lock them out (M5).
+async function assertOtpSendAllowed(
+  prisma: PrismaClient,
+  phone: string,
+  ip: string | null,
+): Promise<void> {
   const lastOtp = await prisma.otpCode.findFirst({
     where: { phone },
     orderBy: { createdAt: 'desc' },
@@ -31,11 +39,41 @@ async function assertOtpSendAllowed(prisma: PrismaClient, phone: string): Promis
     throw Errors.rateLimited({ bucket: 'otp_send_min', reason: 'too_soon' });
   }
   const dayAgo = new Date(now - 24 * 60 * 60_000);
-  const dayCount = await prisma.otpCode.count({
-    where: { phone, createdAt: { gte: dayAgo } },
-  });
-  if (dayCount >= OTP_DAILY_CAP) {
+  const [pairCount, phoneCount] = await Promise.all([
+    prisma.otpCode.count({ where: { phone, requestIp: ip, createdAt: { gte: dayAgo } } }),
+    prisma.otpCode.count({ where: { phone, createdAt: { gte: dayAgo } } }),
+  ]);
+  if (pairCount >= OTP_DAILY_CAP) {
     throw Errors.rateLimited({ bucket: 'otp_send_day', limit: OTP_DAILY_CAP });
+  }
+  if (phoneCount >= env.OTP_PHONE_DAILY_CEILING) {
+    throw Errors.rateLimited({ bucket: 'otp_send_day_phone', limit: env.OTP_PHONE_DAILY_CEILING });
+  }
+  await assertOtpBudget(prisma, phone, dayAgo);
+}
+
+// H1: platform-wide daily OTP budget (WhatsApp templates cost money; OTP goes
+// to every country, no CAPTCHA). Foreign (non-+996) numbers get a lower budget
+// of their own — that's where toll-fraud traffic comes from.
+async function assertOtpBudget(prisma: PrismaClient, phone: string, since: Date): Promise<void> {
+  const total = await prisma.otpCode.count({ where: { createdAt: { gte: since } } });
+  if (total >= env.OTP_GLOBAL_DAILY_CAP) {
+    logger.error(
+      { event: 'otp.budget_exceeded', scope: 'global', count: total, cap: env.OTP_GLOBAL_DAILY_CAP },
+      'ALERT: global daily OTP budget exhausted — OTP sending paused',
+    );
+    throw Errors.otpBudgetExceeded({ scope: 'global' });
+  }
+  if (phone.startsWith(KG_PREFIX)) return;
+  const foreign = await prisma.otpCode.count({
+    where: { createdAt: { gte: since }, NOT: { phone: { startsWith: KG_PREFIX } } },
+  });
+  if (foreign >= env.OTP_FOREIGN_DAILY_CAP) {
+    logger.error(
+      { event: 'otp.budget_exceeded', scope: 'foreign', count: foreign, cap: env.OTP_FOREIGN_DAILY_CAP },
+      'ALERT: foreign-number daily OTP budget exhausted — non-+996 OTP paused',
+    );
+    throw Errors.otpBudgetExceeded({ scope: 'foreign' });
   }
 }
 
@@ -48,7 +86,7 @@ async function deliverOtp(phone: string, code: string): Promise<void> {
     return;
   }
   recordSent(phone, `Terme: ${code} — код подтверждения. Срок действия: 10 минут.`);
-  logger.info({ phone }, '[MOCK OTP] captured locally (WhatsApp not configured)');
+  logger.info({ phone: maskPhone(phone) }, '[MOCK OTP] captured locally (WhatsApp not configured)');
 }
 
 function normalizeTelegramPhone(raw: string): string {
@@ -117,16 +155,20 @@ export async function linkTelegramContact(
 }
 
 export function createOtpMethods(prisma: PrismaClient) {
-  async function sendOtp(phone: string): Promise<{ expiresInSec: number; debug_code?: string }> {
-    await assertOtpSendAllowed(prisma, phone);
+  // `ip` = requester IP (null for the Telegram bot), see assertOtpSendAllowed.
+  async function sendOtp(
+    phone: string,
+    ip: string | null = null,
+  ): Promise<{ expiresInSec: number; debug_code?: string }> {
+    await assertOtpSendAllowed(prisma, phone, ip);
     const code = generateOtp();
     const codeHash = await password.hash(code);
     const expiresAt = new Date(Date.now() + OTP_TTL_SEC * 1000);
-    await prisma.otpCode.create({ data: { phone, codeHash, expiresAt } });
+    await prisma.otpCode.create({ data: { phone, codeHash, expiresAt, requestIp: ip } });
     try {
       await deliverOtp(phone, code);
     } catch (err) {
-      logger.error({ err, phone }, 'OTP delivery failed');
+      logger.error({ err, phone: maskPhone(phone) }, 'OTP delivery failed');
       throw Errors.serviceUnavailable('OTP delivery failed');
     }
     // Only leak the code back when OTP_DEBUG is explicitly on (dev/CI).
@@ -232,7 +274,11 @@ export function createOtpMethods(prisma: PrismaClient) {
 
   // Phone change: the session proves who is asking, the code to the NEW number
   // proves its possession.
-  async function startPhoneChange(userId: string, newPhone: string): Promise<{ expiresInSec: number }> {
+  async function startPhoneChange(
+    userId: string,
+    newPhone: string,
+    ip: string | null = null,
+  ): Promise<{ expiresInSec: number }> {
     await assertActiveUser(userId, prisma);
     const taken = await prisma.user.findFirst({
       where: { phone: newPhone, deletedAt: null, NOT: { id: userId } },
@@ -245,7 +291,7 @@ export function createOtpMethods(prisma: PrismaClient) {
     if (recent >= PHONE_CHANGE_DAILY_CAP) {
       throw Errors.rateLimited({ bucket: 'phone_change_day', limit: PHONE_CHANGE_DAILY_CAP });
     }
-    return sendOtp(newPhone);
+    return sendOtp(newPhone, ip);
   }
 
   async function confirmPhoneChange(

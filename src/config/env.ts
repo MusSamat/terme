@@ -57,6 +57,17 @@ const EnvSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
 
+  // H1: OTP cost protection (no CAPTCHA, every country allowed). Per-IP send
+  // caps sit in front of the DB-backed per-phone throttle; the daily budgets
+  // count every code issued platform-wide in the last 24h (503 when spent).
+  OTP_IP_HOURLY_CAP: z.coerce.number().int().positive().default(5),
+  OTP_IP_DAILY_CAP: z.coerce.number().int().positive().default(20),
+  OTP_GLOBAL_DAILY_CAP: z.coerce.number().int().positive().default(2000),
+  OTP_FOREIGN_DAILY_CAP: z.coerce.number().int().positive().default(100),
+  // M5: per-phone absolute ceiling across all IPs (the per (phone, ip) daily cap
+  // is OTP_DAILY_CAP) — an attacker can't burn a victim's whole daily quota.
+  OTP_PHONE_DAILY_CEILING: z.coerce.number().int().positive().default(15),
+
   SUPERADMIN_EMAIL: z.string().email().default('superadmin@terme.kg'),
   SUPERADMIN_TEMP_PASSWORD: z.string().min(8).default('change-on-first-login-please'),
 

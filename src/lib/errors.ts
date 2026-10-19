@@ -19,6 +19,7 @@ export const ErrorCode = {
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
   WHATSAPP_WINDOW_EXPIRED: 'WHATSAPP_WINDOW_EXPIRED',
   VERIFICATION_LOCKED: 'VERIFICATION_LOCKED',
+  OTP_BUDGET_EXCEEDED: 'OTP_BUDGET_EXCEEDED',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -41,6 +42,7 @@ const HTTP_STATUS: Record<ErrorCodeValue, number> = {
   SERVICE_UNAVAILABLE: 503,
   WHATSAPP_WINDOW_EXPIRED: 409,
   VERIFICATION_LOCKED: 403,
+  OTP_BUDGET_EXCEEDED: 503,
 };
 
 export class AppError extends Error {
@@ -95,4 +97,6 @@ export const Errors = {
     new AppError('WHATSAPP_WINDOW_EXPIRED', '24-hour window expired, a template message is required', details),
   verificationLocked: (details?: Record<string, unknown>) =>
     new AppError('VERIFICATION_LOCKED', 'Driver verification is locked by moderation', details),
+  otpBudgetExceeded: (details?: Record<string, unknown>) =>
+    new AppError('OTP_BUDGET_EXCEEDED', 'OTP sending is temporarily paused', details),
 } as const;

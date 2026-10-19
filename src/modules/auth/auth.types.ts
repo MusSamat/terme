@@ -43,7 +43,7 @@ export interface AdminRefreshResult {
 
 export interface AuthService {
   checkPhone(phone: string): Promise<{ exists: boolean; hasPassword: boolean }>;
-  sendOtp(phone: string): Promise<{ expiresInSec: number; debug_code?: string }>;
+  sendOtp(phone: string, ip?: string | null): Promise<{ expiresInSec: number; debug_code?: string }>;
   consumeOtp(phone: string, code: string): Promise<void>;
   verifyOtp(phone: string, code: string, deviceInfo?: string): Promise<AuthResult>;
   registerWithPhone(
@@ -57,7 +57,11 @@ export interface AuthService {
   loginWithPassword(phone: string, plainPassword: string, deviceInfo?: string): Promise<AuthResult>;
   changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void>;
   resetPassword(phone: string, code: string, newPassword: string): Promise<void>;
-  startPhoneChange(userId: string, newPhone: string): Promise<{ expiresInSec: number }>;
+  startPhoneChange(
+    userId: string,
+    newPhone: string,
+    ip?: string | null,
+  ): Promise<{ expiresInSec: number }>;
   confirmPhoneChange(
     userId: string,
     newPhone: string,

@@ -71,10 +71,14 @@ describe('POST /v1/auth/phone/send-otp', () => {
           codeHash: 'seed',
           expiresAt: new Date(Date.now() + 60_000),
           createdAt: new Date(Date.now() - 60_001 - i * 1000), // >1 min apart
+          requestIp: '10.1.1.1', // M5: the daily cap is per (phone, ip)
         },
       });
     }
-    const res = await request(app).post('/v1/auth/phone/send-otp').send({ phone });
+    const res = await request(app)
+      .post('/v1/auth/phone/send-otp')
+      .set('X-Forwarded-For', '10.1.1.1')
+      .send({ phone });
     expect(res.status).toBe(429);
     expect(res.body.error.details.bucket).toBe('otp_send_day');
   });
