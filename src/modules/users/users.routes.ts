@@ -132,8 +132,9 @@ export function createUsersRouter(prisma: PrismaClient, notifier: Notifier): Rou
         currentPassword: string;
         newPassword: string;
       };
-      await auth.changePassword(req.user!.id, currentPassword, newPassword);
-      res.status(204).send();
+      const ua = req.header('user-agent')?.slice(0, 300);
+      // M2: 200 + a fresh token pair; every other session is revoked.
+      res.json(await auth.changePassword(req.user!.id, currentPassword, newPassword, ua));
     }),
   );
 

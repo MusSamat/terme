@@ -919,7 +919,8 @@ export const openapiDocument = {
         summary: 'Change the password (current one required)',
         description:
           'No password yet → 409 password_not_set: use /auth/phone/reset-password. '
-          + 'New password must be ≥8 chars and contain a digit.',
+          + 'New password must be ≥8 chars and contain a digit. Every session is revoked; the '
+          + 'response carries a fresh token pair (channel=web → refresh token in the HttpOnly cookie).',
         requestBody: {
           required: true,
           content: {
@@ -935,12 +936,16 @@ export const openapiDocument = {
                     maxLength: 200,
                     description: 'must contain at least one digit',
                   },
+                  channel: { type: 'string', enum: ['mobile', 'web'] },
                 },
               },
             },
           },
         },
-        responses: { '204': { description: 'Set' }, ...errorResponses },
+        responses: {
+          '200': { description: 'Changed — fresh session', content: jsonOk('AuthResult') },
+          ...errorResponses,
+        },
       },
     },
     '/users/me/phone': {

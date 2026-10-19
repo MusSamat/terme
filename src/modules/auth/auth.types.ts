@@ -58,7 +58,12 @@ export interface AuthService {
     deviceInfo?: string,
   ): Promise<AuthResult>;
   loginWithPassword(phone: string, plainPassword: string, deviceInfo?: string): Promise<AuthResult>;
-  changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void>;
+  changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    deviceInfo?: string,
+  ): Promise<AuthResult>;
   resetPassword(phone: string, code: string, newPassword: string): Promise<void>;
   startPhoneChange(
     userId: string,

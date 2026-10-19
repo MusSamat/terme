@@ -116,8 +116,34 @@ describe('PATCH /v1/users/me/password', () => {
       .patch('/v1/users/me/password')
       .set('Authorization', `Bearer ${u.accessToken}`)
       .send({ currentPassword: 'oldpass12', newPassword: 'newpass12' });
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
+    expect(res.body.accessToken).toBeTruthy();
     expect((await login('+996700300300', 'newpass12')).status).toBe(200);
+  });
+
+  it('revokes every other session and returns a working fresh pair (M2)', async () => {
+    const u = await userWithPassword('+996700300302', 'oldpass12');
+    const res = await request(app)
+      .patch('/v1/users/me/password')
+      .set('Authorization', `Bearer ${u.accessToken}`)
+      .send({ currentPassword: 'oldpass12', newPassword: 'newpass12' });
+    expect(res.status).toBe(200);
+    const old = await request(app).post('/v1/auth/refresh').send({ refreshToken: u.refreshToken });
+    expect(old.status).toBe(401);
+    const fresh = await request(app).post('/v1/auth/refresh').send({ refreshToken: res.body.refreshToken });
+    expect(fresh.status).toBe(200);
+  });
+
+  it('web channel gets the new refresh token as an HttpOnly cookie, not in the body', async () => {
+    const u = await userWithPassword('+996700300303', 'oldpass12');
+    const res = await request(app)
+      .patch('/v1/users/me/password')
+      .set('Authorization', `Bearer ${u.accessToken}`)
+      .send({ currentPassword: 'oldpass12', newPassword: 'newpass12', channel: 'web' });
+    expect(res.status).toBe(200);
+    expect(res.body.refreshToken).toBeUndefined();
+    const cookies = ([] as string[]).concat(res.headers['set-cookie'] ?? []);
+    expect(cookies.some((c) => c.startsWith('terme_rt=') && /HttpOnly/i.test(c))).toBe(true);
   });
 
   it('rejects a wrong current password (401) and requires auth (401)', async () => {

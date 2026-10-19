@@ -25,6 +25,8 @@ export const ResetPasswordBody = z.object({
 export const ChangePasswordBody = z.object({
   currentPassword: z.string().min(1).max(200),
   newPassword: PasswordSchema,
+  // web → the new refresh token goes into the HttpOnly cookie (M2).
+  channel: z.enum(['mobile', 'web']).default('mobile'),
 });
 
 export const SendOtpBody = z.object({

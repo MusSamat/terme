@@ -28,21 +28,33 @@ export function createPasswordMethods(
     return issueFullAuthForUser(prisma, user.id, deviceInfo);
   }
 
-  // Change an existing password (logged in, knows the current one).
+  // Change an existing password (logged in, knows the current one). M2: every
+  // session (all refresh tokens) is revoked and the caller gets a fresh pair,
+  // so only this device stays signed in.
   async function changePassword(
     userId: string,
     currentPassword: string,
     newPassword: string,
-  ): Promise<void> {
+    deviceInfo?: string,
+  ): Promise<AuthResult> {
     const user = await assertActiveUser(userId, prisma);
     if (!user.passwordHash) throw Errors.conflict('Password not set', { reason: 'password_not_set' });
     if (!(await password.verify(currentPassword, user.passwordHash))) {
       throw Errors.unauthorized({ reason: 'current_password_mismatch' });
     }
-    await prisma.user.update({
-      where: { id: userId },
-      data: { passwordHash: await password.hash(newPassword), lastPasswordChangedAt: new Date() },
-    });
+    const now = new Date();
+    const passwordHash = await password.hash(newPassword);
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash, lastPasswordChangedAt: now },
+      }),
+      prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now },
+      }),
+    ]);
+    return issueFullAuthForUser(prisma, userId, deviceInfo);
   }
 
   // «Forgot password» and first-time set: a fresh WhatsApp code to the
