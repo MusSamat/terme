@@ -76,8 +76,10 @@ const EnvSchema = z.object({
   // H1: OTP cost protection (no CAPTCHA, every country allowed). Per-IP send
   // caps sit in front of the DB-backed per-phone throttle; the daily budgets
   // count every code issued platform-wide in the last 24h (503 when spent).
-  OTP_IP_HOURLY_CAP: z.coerce.number().int().positive().default(5),
-  OTP_IP_DAILY_CAP: z.coerce.number().int().positive().default(20),
+  // Per-IP caps are generous: Kyrgyz mobile carriers put many users behind one
+  // CGNAT address; the per-phone limits do the real work.
+  OTP_IP_HOURLY_CAP: z.coerce.number().int().positive().default(20),
+  OTP_IP_DAILY_CAP: z.coerce.number().int().positive().default(60),
   OTP_GLOBAL_DAILY_CAP: z.coerce.number().int().positive().default(2000),
   OTP_FOREIGN_DAILY_CAP: z.coerce.number().int().positive().default(100),
   // M5: per-phone absolute ceiling across all IPs (the per (phone, ip) daily cap

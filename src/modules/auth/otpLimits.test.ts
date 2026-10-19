@@ -83,7 +83,7 @@ describe('OTP route limiters (H1/M5)', () => {
     env.RATE_LIMIT_DISABLED = false;
     const ip = '10.6.0.1';
     for (let i = 0; i < env.OTP_IP_HOURLY_CAP; i += 1) {
-      const ok = await send(`+99670020000${i}`, ip);
+      const ok = await send(`+996700200${String(i).padStart(3, '0')}`, ip);
       expect(ok.status).toBe(200);
     }
     const blocked = await send('+996700209999', ip);
