@@ -209,6 +209,26 @@ export function createTripsService(
       return { trip: await getById(existing.id), reused: true };
     }
 
+    try {
+      return await createFresh(driverUserId, body, idempotencyKey);
+    } catch (err) {
+      // A concurrent request with the same Idempotency-Key passed the lookup
+      // above and committed first; ours then trips a business check
+      // (duplicate_route_day, max_active…) or a unique violation. Replay the
+      // winner instead of surfacing that error.
+      const winner = await prisma.trip.findUnique({ where: { idempotencyKey } });
+      if (winner?.driverId === driverUserId) {
+        return { trip: await getById(winner.id, driverUserId), reused: true };
+      }
+      throw err;
+    }
+  }
+
+  async function createFresh(
+    driverUserId: string,
+    body: TripCreateInput,
+    idempotencyKey: string,
+  ): Promise<{ trip: TripDetail; reused: boolean }> {
     // Phase 1: publishing needs a CAR, not verification. Verification stays an
     // optional badge (driver_profiles) — it никогда больше не гейтит публикацию.
     await assertActiveUser(driverUserId, prisma);
@@ -363,15 +383,6 @@ export function createTripsService(
       });
       return { trip: await getById(created.id, driverUserId), reused: false };
     } catch (err) {
-      // Two concurrent requests with the same Idempotency-Key both pass the
-      // lookup above; the loser hits a unique violation. Replay the winner's
-      // trip instead of misreporting it as a duplicate route-day.
-      if ((err as { code?: string }).code === 'P2002') {
-        const winner = await prisma.trip.findUnique({ where: { idempotencyKey } });
-        if (winner?.driverId === driverUserId) {
-          return { trip: await getById(winner.id, driverUserId), reused: true };
-        }
-      }
       throw mapPrismaError(err);
     }
   }
