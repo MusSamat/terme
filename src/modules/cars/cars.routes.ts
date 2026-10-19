@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import type { PrismaClient } from '@prisma/client';
 import { createCarsService } from './cars.service.js';
 import { createCarCatalogService, type CarCatalogService } from './carCatalog.service.js';
@@ -22,9 +23,9 @@ export function createCarsRouter(prisma: PrismaClient, catalog?: CarCatalogServi
   );
   router.get(
     '/catalog/brands/:id/models',
+    validate({ params: z.object({ id: z.coerce.number().int().positive() }) }),
     asyncHandler(async (req, res) => {
-      const brandId = Number(req.params.id);
-      res.json({ data: Number.isInteger(brandId) ? await catalogSvc.listModels(brandId) : [] });
+      res.json({ data: await catalogSvc.listModels(Number(req.params.id)) });
     }),
   );
   router.get(

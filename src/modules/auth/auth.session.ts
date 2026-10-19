@@ -75,9 +75,9 @@ export function createSessionMethods(prisma: PrismaClient, _notifier: Notifier) 
       throw Errors.unauthorized({ reason: 'refresh_not_found' });
     }
 
-    const alreadyRotated = stored.usedAt != null || stored.revokedAt != null;
+    const alreadyRotated = stored.usedAt !== null || stored.revokedAt !== null;
     const withinGrace =
-      stored.usedAt != null && Date.now() - stored.usedAt.getTime() < GRACE_MS;
+      stored.usedAt !== null && Date.now() - stored.usedAt.getTime() < GRACE_MS;
 
     if (alreadyRotated) {
       if (withinGrace) {

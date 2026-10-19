@@ -8,6 +8,7 @@ import {
   AuditLogQuery,
   BlockBody,
   ChartNameParam,
+  ChartQuery,
   CarBrandCreateBody,
   CarBrandUpdateBody,
   CarColorCreateBody,
@@ -42,7 +43,6 @@ import { createAdminTripsService } from './adminTrips.service.js';
 import { createAdminRequestsService } from './adminRequests.service.js';
 import { createAdminAnalyticsService } from './adminAnalytics.service.js';
 import { createAdminCarCatalogService } from './adminCarCatalog.service.js';
-import { cursorArgs, sliceAndNext } from '@/lib/pagination.js';
 import type { Notifier } from '@/lib/notifier.js';
 import type { CarCatalogService } from '@/modules/cars/carCatalog.service.js';
 import { createWhatsappAdminRouter } from '@/modules/whatsapp/whatsapp.admin.routes.js';
@@ -442,10 +442,10 @@ export function createAdminRouter(
 
   router.get(
     '/analytics/charts/:name',
-    validate({ params: ChartNameParam }),
+    validate({ params: ChartNameParam, query: ChartQuery }),
     asyncHandler(async (req, res) => {
-      const days = Number(req.query.days);
-      res.json(await analytics.chart(req.params.name!, isNaN(days) ? 30 : days));
+      const { days } = req.query as unknown as { days: number };
+      res.json(await analytics.chart(req.params.name!, days));
     }),
   );
 
@@ -460,22 +460,7 @@ export function createAdminRouter(
         cursor?: string;
         limit: number;
       };
-      // TZ §6.3: admin sees only their own actions; superadmin sees all.
-      const effectiveAdminId =
-        req.admin!.role === 'superadmin' ? q.adminId : req.admin!.id;
-
-      const rows = await prisma.adminAction.findMany({
-        where: {
-          ...(effectiveAdminId ? { adminId: effectiveAdminId } : {}),
-          ...(q.action ? { action: q.action } : {}),
-        },
-        orderBy: { createdAt: 'desc' },
-        ...cursorArgs(q),
-        include: {
-          admin: { select: { id: true, email: true, name: true, role: true } },
-        },
-      });
-      res.json(sliceAndNext(rows, q.limit));
+      res.json(await admins.listAuditLog(req.admin!, q));
     }),
   );
 

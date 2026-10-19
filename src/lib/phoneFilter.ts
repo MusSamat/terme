@@ -11,11 +11,11 @@ const PATTERNS: RegExp[] = [
   // +996 XXX XXX XXX with assorted separators
   /\+?\s*9\s*9\s*6[\s\-()]*\d[\s\d\-()]{8,}/g,
   // 0XXX XXX XXX local format (leading 0 + 9 digits, 10 total)
-  /(?:^|\D)0\s*\d{3}[\s\-]*\d{3}[\s\-]*\d{3}(?=$|\D)/g,
+  /(?:^|\D)0\s*\d{3}[\s-]*\d{3}[\s-]*\d{3}(?=$|\D)/g,
   // Plain runs of 9-12 digits not touching other digits — catches attempts like
   // "my number 700123456". Allow short numeric strings (years, codes) by
   // requiring ≥9 consecutive digits.
-  /(?:^|\D)(?:\d[\s\-]*){9,12}(?=$|\D)/g,
+  /(?:^|\D)(?:\d[\s-]*){9,12}(?=$|\D)/g,
 ];
 
 const REDACTED = '[скрыто]';

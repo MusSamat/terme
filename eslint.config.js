@@ -31,11 +31,14 @@ export default [
     rules: {
       ...tseslint.configs.recommended.rules,
       '@typescript-eslint/no-explicit-any': 'error',
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/consistent-type-imports': 'warn',
       'no-console': ['warn', { allow: ['warn', 'error'] }],
       'eqeqeq': ['error', 'always'],
       'no-unused-vars': 'off',
+      // TypeScript resolves identifiers itself (Express/NodeJS namespaces, DOM
+      // globals like URL/fetch) — typescript-eslint recommends disabling this.
+      'no-undef': 'off',
     },
   },
 ];

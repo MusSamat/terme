@@ -1,7 +1,14 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import * as password from '@/lib/bcrypt.js';
 import { Errors } from '@/lib/errors.js';
+import { cursorArgs, sliceAndNext } from '@/lib/pagination.js';
 import { writeAdminAction } from './admin.audit.js';
+
+const auditInclude = {
+  admin: { select: { id: true, email: true, name: true, role: true } },
+} satisfies Prisma.AdminActionInclude;
+
+type AuditLogRow = Prisma.AdminActionGetPayload<{ include: typeof auditInclude }>;
 
 export interface AdminAdminsService {
   list(): Promise<
@@ -21,6 +28,10 @@ export interface AdminAdminsService {
     adminId: string,
     ip?: string | null,
   ): Promise<{ id: string }>;
+  listAuditLog(
+    viewer: { id: string; role: 'admin' | 'superadmin' },
+    q: { adminId?: string; action?: string; cursor?: string; limit: number },
+  ): Promise<{ data: AuditLogRow[]; nextCursor: string | null }>;
 }
 
 export function createAdminAdminsService(prisma: PrismaClient): AdminAdminsService {
@@ -73,5 +84,23 @@ export function createAdminAdminsService(prisma: PrismaClient): AdminAdminsServi
     return { id: created.id };
   }
 
-  return { list, create };
+  async function listAuditLog(
+    viewer: { id: string; role: 'admin' | 'superadmin' },
+    q: { adminId?: string; action?: string; cursor?: string; limit: number },
+  ) {
+    // TZ §6.3: admin sees only their own actions; superadmin sees all.
+    const effectiveAdminId = viewer.role === 'superadmin' ? q.adminId : viewer.id;
+    const rows = await prisma.adminAction.findMany({
+      where: {
+        ...(effectiveAdminId ? { adminId: effectiveAdminId } : {}),
+        ...(q.action ? { action: q.action } : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      ...cursorArgs(q),
+      include: auditInclude,
+    });
+    return sliceAndNext(rows, q.limit);
+  }
+
+  return { list, create, listAuditLog };
 }

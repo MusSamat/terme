@@ -1,16 +1,11 @@
 import { Router } from 'express';
-import { z } from 'zod';
 import type { PrismaClient } from '@prisma/client';
 import { createLoyaltyService } from './loyalty.service.js';
 import { requireAuth } from '@/middleware/auth.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { validate } from '@/middleware/validate.js';
+import { CursorPaginationQuery } from '@/lib/pagination.js';
 import type { Notifier } from '@/lib/notifier.js';
-
-const CursorQuery = z.object({
-  cursor: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(50).default(20),
-});
 
 export function createLoyaltyRouter(prisma: PrismaClient, notifier: Notifier): Router {
   const router = Router();
@@ -30,7 +25,7 @@ export function createLoyaltyRouter(prisma: PrismaClient, notifier: Notifier): R
   router.get(
     '/transactions',
     requireAuth,
-    validate({ query: CursorQuery }),
+    validate({ query: CursorPaginationQuery }),
     asyncHandler(async (req, res) => {
       const q = req.query as unknown as { cursor?: string; limit: number };
       const result = await service.listTransactions(req.user!.id, q);

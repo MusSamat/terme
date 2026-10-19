@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { PrismaClient } from '@prisma/client';
 import { createDriverService, type SubmissionFiles } from './drivers.service.js';
-import { DriverReuploadQuery, DriverVerificationBody } from './drivers.schemas.js';
+import { DriverReuploadQuery, DriverVerificationBody, type DriverVerificationInput } from './drivers.schemas.js';
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { requireAuth, requireRole } from '@/middleware/auth.js';
@@ -42,7 +42,7 @@ export function createDriversRouter(prisma: PrismaClient): Router {
 
       const result = await service.submitVerification(
         req.user!.id,
-        req.body as import('./drivers.schemas.js').DriverVerificationInput,
+        req.body as DriverVerificationInput,
         picked as SubmissionFiles,
       );
       res.status(201).json(result);

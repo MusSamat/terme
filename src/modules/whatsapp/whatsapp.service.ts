@@ -1,5 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { logger } from '@/lib/logger.js';
+import { Errors } from '@/lib/errors.js';
+import { sendWhatsappText } from '@/lib/whatsapp.js';
 
 // ─── Meta webhook payload shapes (only the fields we read) ─────────────────
 interface WaTextMessage {
@@ -144,4 +146,69 @@ export async function ingestWebhook(prisma: PrismaClient, body: WaWebhookBody): 
       }
     }
   }
+}
+
+// ─── Admin inbox (read + reply) ───────────────────────────────────────────
+export function createWhatsappInboxService(prisma: PrismaClient) {
+  // Conversations, newest activity first, each with a last-message preview.
+  async function listConversations() {
+    const rows = await prisma.whatsappConversation.findMany({
+      orderBy: { lastMessageAt: 'desc' },
+      take: 200,
+      include: { messages: { orderBy: { createdAt: 'desc' }, take: 1 } },
+    });
+    return rows.map((c) => ({
+      id: c.id,
+      phoneNumber: c.phoneNumber,
+      lastMessageAt: c.lastMessageAt,
+      lastMessagePreview: c.messages[0]?.body ?? null,
+    }));
+  }
+
+  // Full message thread for one conversation, oldest first.
+  async function listMessages(conversationId: string) {
+    const conversation = await prisma.whatsappConversation.findUnique({
+      where: { id: conversationId },
+    });
+    if (!conversation) throw Errors.notFound('Conversation');
+    return prisma.whatsappMessage.findMany({
+      where: { conversationId: conversation.id },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  // Send a free-text reply via the Cloud API, then persist it as OUTBOUND.
+  // Send-first, save-after: if the 24h window is closed sendWhatsappText throws
+  // WHATSAPP_WINDOW_EXPIRED (409) and nothing is written.
+  async function reply(conversationId: string, text: string) {
+    const conversation = await prisma.whatsappConversation.findUnique({
+      where: { id: conversationId },
+    });
+    if (!conversation) throw Errors.notFound('Conversation');
+
+    const { wamid } = await sendWhatsappText(conversation.phoneNumber, text);
+
+    // Upsert (not create) by wamid: a delivery-status webhook for this message
+    // can race ahead and create a placeholder row first (see ingestStatus). If
+    // so, fill in the body but keep the already-advanced status — don't reset
+    // it to SENT. Upsert also avoids a unique-collision 500 on that race.
+    const message = await prisma.whatsappMessage.upsert({
+      where: { whatsappMessageId: wamid },
+      update: { body: text, conversationId: conversation.id, direction: 'OUTBOUND' },
+      create: {
+        conversationId: conversation.id,
+        direction: 'OUTBOUND',
+        body: text,
+        status: 'SENT',
+        whatsappMessageId: wamid,
+      },
+    });
+    await prisma.whatsappConversation.update({
+      where: { id: conversation.id },
+      data: { lastMessageAt: message.createdAt },
+    });
+    return message;
+  }
+
+  return { listConversations, listMessages, reply };
 }

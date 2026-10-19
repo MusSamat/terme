@@ -1,4 +1,4 @@
-import type { ErrorRequestHandler, RequestHandler } from 'express';
+import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Response } from 'express';
 import { AppError, Errors, type ErrorCodeValue } from '@/lib/errors.js';
 import { translateError } from '@/lib/i18n.js';
 import { logger } from '@/lib/logger.js';
@@ -11,9 +11,9 @@ import { captureException } from '@/lib/sentry.js';
  */
 export function asyncHandler(
   fn: (
-    req: import('express').Request,
-    res: import('express').Response,
-    next: import('express').NextFunction,
+    req: Request,
+    res: Response,
+    next: NextFunction,
   ) => unknown | Promise<unknown>,
 ): RequestHandler {
   return (req, res, next) => {

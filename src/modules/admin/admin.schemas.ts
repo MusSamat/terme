@@ -152,6 +152,11 @@ export const ForceCancelBody = z.object({
 });
 
 // ─── Analytics ───────────────────────────────────────────────────────────
+// Chart window in days (the service clamps it to 7..90).
+export const ChartQuery = z.object({
+  days: z.coerce.number().int().min(1).max(365).default(30),
+});
+
 export const ChartNameParam = z.object({
   name: z.enum([
     'registrations_by_day',
