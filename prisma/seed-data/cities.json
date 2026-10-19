@@ -30834,9 +30834,9 @@
 "type": "city_district",
 "name_ru": "Ленинский район",
 "name_kg": "Ленин району",
-"lat": null,
-"lng": null,
-"approx": false,
+"lat": 42.8566,
+"lng": 74.557,
+"approx": true,
 "osm_id": null,
 "aliases": [],
 "merged_codes": [],
@@ -30848,9 +30848,9 @@
 "type": "city_district",
 "name_ru": "Октябрьский район",
 "name_kg": "Октябрь району",
-"lat": null,
-"lng": null,
-"approx": false,
+"lat": 42.838,
+"lng": 74.62,
+"approx": true,
 "osm_id": null,
 "aliases": [],
 "merged_codes": [],
@@ -30862,9 +30862,9 @@
 "type": "city_district",
 "name_ru": "Первомайский район",
 "name_kg": "Биринчи Май району",
-"lat": null,
-"lng": null,
-"approx": false,
+"lat": 42.885,
+"lng": 74.595,
+"approx": true,
 "osm_id": null,
 "aliases": [],
 "merged_codes": [],
@@ -30876,9 +30876,9 @@
 "type": "city_district",
 "name_ru": "Свердловский район",
 "name_kg": "Свердлов району",
-"lat": null,
-"lng": null,
-"approx": false,
+"lat": 42.887,
+"lng": 74.65,
+"approx": true,
 "osm_id": null,
 "aliases": [],
 "merged_codes": [],
@@ -32073,7 +32073,8 @@
 "аэропорт тамчы"
 ],
 "merged_codes": [],
-"searchable": true
+"searchable": true,
+"active": false
 },
 {
 "code": "airport:JUL",
@@ -32091,7 +32092,8 @@
 "аэропорт манас жалал-абад"
 ],
 "merged_codes": [],
-"searchable": true
+"searchable": true,
+"active": false
 },
 {
 "code": "airport:BAT",
@@ -32108,6 +32110,7 @@
 "аэропорт"
 ],
 "merged_codes": [],
-"searchable": true
+"searchable": true,
+"active": false
 }
 ]

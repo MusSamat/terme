@@ -49,6 +49,7 @@ ALIASES = {'41703410000010': ['жалал-абад', 'джалал-абад', 'j
 
 # Airports are places of their own (airport transfers are a first-class ride
 # kind). Parent = the raion they lie in (SOATE code), else the oblast.
+# active=False: kept in the directory but no transfers yet (admin re-enables).
 AIRPORTS = [
     {'iata': 'FRU', 'parent': '41708222000000', 'name_ru': 'Аэропорт «Манас»',
      'name_kg': '«Манас» эл аралык аэропорту', 'lat': 43.0613, 'lng': 74.4776,
@@ -56,16 +57,23 @@ AIRPORTS = [
     {'iata': 'OSS', 'parent': '41706226000000', 'name_ru': 'Аэропорт Ош',
      'name_kg': 'Ош эл аралык аэропорту', 'lat': 40.609, 'lng': 72.7932,
      'aliases': ['аэропорт ош', 'ош аэропорт', 'oss', 'airport osh']},
-    {'iata': 'IKU', 'parent': '41702215000000', 'name_ru': 'Аэропорт «Иссык-Куль» (Тамчы)',
+    {'iata': 'IKU', 'active': False, 'parent': '41702215000000', 'name_ru': 'Аэропорт «Иссык-Куль» (Тамчы)',
      'name_kg': '«Ысык-Көл» эл аралык аэропорту (Тамчы)', 'lat': 42.5881, 'lng': 76.7136,
      'aliases': ['аэропорт тамчы', 'аэропорт иссык-куль', 'iku']},
-    {'iata': 'JUL', 'parent': '41703000000000', 'name_ru': 'Аэропорт Жалал-Абад',
+    {'iata': 'JUL', 'active': False, 'parent': '41703000000000', 'name_ru': 'Аэропорт Жалал-Абад',
      'name_kg': 'Жалал-Абад аэропорту', 'lat': 40.9441, 'lng': 72.9775,
      'aliases': ['аэропорт жалал-абад', 'аэропорт манас жалал-абад']},
-    {'iata': 'BAT', 'parent': '41705214000000', 'name_ru': 'Аэропорт Баткен',
+    {'iata': 'BAT', 'active': False, 'parent': '41705214000000', 'name_ru': 'Аэропорт Баткен',
      'name_kg': 'Баткен аэропорту', 'lat': 40.0433, 'lng': 70.8380,
      'aliases': ['аэропорт баткен']},
 ]
+
+# Бишкек city districts have no point in SOATE / OSM: approximate centroids
+# (approx=True) so they can be the non-airport end of a transfer.
+DISTRICT_POINTS = {
+    '41711201000000': (42.8566, 74.5570), '41711202000000': (42.8380, 74.6200),
+    '41711203000000': (42.8850, 74.5950), '41711204000000': (42.8870, 74.6500),
+}
 
 LATIN_TO_CYR = str.maketrans('ABCEHKMOPTXaceopxy', 'АВСЕНКМОРТХасеорху')
 
@@ -415,6 +423,8 @@ def main():
              'name_ru': a['name_ru'], 'name_kg': a['name_kg'], '_ru_raw': a['name_ru'],
              'lat': a['lat'], 'lng': a['lng'], 'osm_id': None, 'match': 'manual',
              'extra_aliases': set(a['aliases'] + ['аэропорт', 'airport'])}
+        if a.get('active') is False:
+            n['active'] = False
         nodes.append(n)
         settlements.append(n)
         by_code[n['code']] = n
@@ -430,6 +440,11 @@ def main():
             if par:
                 n['lat'], n['lng'] = par['lat'], par['lng']
 
+    for n in nodes:
+        if n['code'] in DISTRICT_POINTS and n['lat'] is None:
+            n['lat'], n['lng'] = DISTRICT_POINTS[n['code']]
+            n['approx'] = True
+
     by_id = {p['id']: p for p in places}
     rows = []
     for n in nodes:
@@ -438,14 +453,17 @@ def main():
         alias |= {x.lower() for x in n.get('extra_aliases', ())}
         alias |= set(ALIASES.get(n['code'], []))
         alias -= {n['name_ru'].lower(), n['name_kg'].lower()}
-        rows.append({
+        row = {
             'code': n['code'], 'parent': n['parent'], 'type': n['type'],
             'name_ru': n['name_ru'], 'name_kg': n['name_kg'],
             'lat': n['lat'], 'lng': n['lng'], 'approx': bool(n.get('approx')),
             'osm_id': n['osm_id'], 'aliases': sorted(alias),
             'merged_codes': n.get('merged', []),
             'searchable': n['type'] in ('capital', 'city', 'town', 'village', 'airport'),
-        })
+        }
+        if n.get('active') is False:
+            row['active'] = False
+        rows.append(row)
     OUT_JSON.write_text(json.dumps(rows, ensure_ascii=False, indent=0) + '\n', encoding='utf-8')
 
     OUT_REVIEW.parent.mkdir(exist_ok=True)
