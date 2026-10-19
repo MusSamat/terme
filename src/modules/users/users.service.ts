@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, User } from '@prisma/client';
 import crypto from 'node:crypto';
 import { Errors, publicPhone } from '@/lib/errors.js';
 import { persistImage, removeImage, toFileUrl } from '@/lib/uploads.js';
@@ -60,6 +60,10 @@ export interface UpdateSelfPatch {
 }
 
 export interface UsersService {
+  /** Telegram bot: the live account linked to this Telegram id. */
+  findByTelegramId(telegramId: number): Promise<User | null>;
+  /** Raw row by id (throws if missing) — internal callers like the bot. */
+  getRow(userId: string): Promise<User>;
   getSelf(userId: string): Promise<SelfUser>;
   updateSelf(
     userId: string,
@@ -368,7 +372,17 @@ export function createUsersService(prisma: PrismaClient): UsersService {
     };
   }
 
+  async function findByTelegramId(telegramId: number): Promise<User | null> {
+    return prisma.user.findFirst({ where: { telegramId: BigInt(telegramId), deletedAt: null } });
+  }
+
+  async function getRow(userId: string): Promise<User> {
+    return prisma.user.findUniqueOrThrow({ where: { id: userId } });
+  }
+
   return {
+    findByTelegramId,
+    getRow,
     getSelf,
     updateSelf,
     deleteSelf,

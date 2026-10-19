@@ -44,7 +44,7 @@ export type BotServices = ReturnType<typeof createBotServices>;
 
 export async function findUser(prisma: PrismaClient, ctx: Context): Promise<User | null> {
   if (!ctx.from) return null;
-  return prisma.user.findFirst({ where: { telegramId: BigInt(ctx.from.id), deletedAt: null } });
+  return createUsersService(prisma).findByTelegramId(ctx.from.id);
 }
 
 export function userLang(user: User | null, ctx: Context): Lang {

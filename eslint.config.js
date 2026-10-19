@@ -41,4 +41,35 @@ export default [
       'no-undef': 'off',
     },
   },
+  // Architecture: Prisma lives in *.service.ts only. Routers and the Telegram
+  // bot talk to services; type-only imports from @prisma/client are fine.
+  {
+    files: ['src/bot/**/*.ts', 'src/**/*.routes.ts'],
+    ignores: ['**/*.test.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@prisma/client',
+              message: 'Prisma belongs in *.service.ts — import types only (import type …).',
+              allowTypeImports: true,
+            },
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "MemberExpression[object.type='Identifier'][object.name=/^(prisma|tx)$/]",
+          message: 'No Prisma calls here — move the query into a *.service.ts.',
+        },
+        {
+          selector: "MemberExpression[object.type='MemberExpression'][object.property.name=/^(prisma|tx)$/]",
+          message: 'No Prisma calls here — move the query into a *.service.ts.',
+        },
+      ],
+    },
+  },
 ];

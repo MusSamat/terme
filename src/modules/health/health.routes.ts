@@ -3,6 +3,7 @@ import type { PrismaClient } from '@prisma/client';
 import fs from 'node:fs/promises';
 import { env } from '@/config/env.js';
 import { logger } from '@/lib/logger.js';
+import { createHealthService } from './health.service.js';
 
 /**
  * TZ §27 "Health check · GET /health проверяет БД + Redis + диск"
@@ -10,6 +11,7 @@ import { logger } from '@/lib/logger.js';
  */
 export function createHealthRouter(prisma: PrismaClient): Router {
   const router = Router();
+  const service = createHealthService(prisma);
 
   router.get('/health', async (_req, res) => {
     const checks: Record<string, 'ok' | 'fail'> = {};
@@ -18,9 +20,7 @@ export function createHealthRouter(prisma: PrismaClient): Router {
 
     // DB check
     try {
-      const start = process.hrtime.bigint();
-      await prisma.$queryRaw`SELECT 1`;
-      dbLatencyMs = Number((process.hrtime.bigint() - start) / 1_000_000n);
+      dbLatencyMs = await service.pingDb();
       checks.db = 'ok';
     } catch (err) {
       logger.error({ err }, 'health: db check failed');

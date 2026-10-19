@@ -124,7 +124,7 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
 
   async function finishLink(ctx: Context, userId: string): Promise<void> {
     if (ctx.from) await svc.session.clear(ctx.from.id);
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const user = await svc.users.getRow(userId);
     const t = TEXTS[langOf(user.language)];
     await showMenu(ctx, user, `${t.linked}\n${t.modeNow(isDriverMode(user))}`);
   }

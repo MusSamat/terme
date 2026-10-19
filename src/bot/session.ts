@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { createBotSessionsService } from '@/modules/botSessions/botSessions.service.js';
 
 export type Flow = 'findTrip' | 'needRide' | 'findPassengers' | 'publish' | 'airport' | 'book' | 'offer' | 'link';
 export type Step =
@@ -55,8 +56,10 @@ export interface Draft {
 const SESSION_TTL_MS = 6 * 60 * 60_000;
 
 export function createSessionStore(prisma: PrismaClient) {
+  const store = createBotSessionsService(prisma);
+
   async function get(telegramId: number): Promise<Draft> {
-    const row = await prisma.botSession.findUnique({ where: { telegramId: BigInt(telegramId) } });
+    const row = await store.load(telegramId);
     if (!row || Date.now() - row.updatedAt.getTime() > SESSION_TTL_MS) return {};
     return (row.data ?? {}) as Draft;
   }
@@ -65,11 +68,7 @@ export function createSessionStore(prisma: PrismaClient) {
     // Round-trip drops keys set to undefined (how a step value is cleared).
     const data = JSON.parse(JSON.stringify(draft)) as Prisma.InputJsonValue;
     const state = draft.flow && draft.step ? `${draft.flow}:${draft.step}` : null;
-    await prisma.botSession.upsert({
-      where: { telegramId: BigInt(telegramId) },
-      update: { data, state },
-      create: { telegramId: BigInt(telegramId), data, state },
-    });
+    await store.save(telegramId, data, state);
   }
 
   async function patch(telegramId: number, changes: Partial<Draft>): Promise<Draft> {
@@ -79,7 +78,7 @@ export function createSessionStore(prisma: PrismaClient) {
   }
 
   async function clear(telegramId: number): Promise<void> {
-    await prisma.botSession.deleteMany({ where: { telegramId: BigInt(telegramId) } });
+    await store.remove(telegramId);
   }
 
   return { get, set, patch, clear };
