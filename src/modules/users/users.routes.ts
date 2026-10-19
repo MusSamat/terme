@@ -54,6 +54,7 @@ export function createUsersRouter(prisma: PrismaClient, notifier: Notifier): Rou
     requireAuth,
     asyncHandler(async (req, res) => {
       await service.deleteSelf(req.user!.id);
+      await notifier.disconnectUser(req.user!.id);
       res.status(204).send();
     }),
   );

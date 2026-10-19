@@ -124,6 +124,14 @@ const EnvSchema = z.object({
   // never called and captureException() is inert. Set on staging/prod to enable.
   SENTRY_DSN: z.string().default(''),
 
+  // M1: drop a socket when its access token expires (client must refresh the
+  // token and reconnect; it receives `auth:expired` first). Kill-switch.
+  WS_DISCONNECT_ON_TOKEN_EXPIRY: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  WS_MAX_CONNECTIONS_PER_USER: z.coerce.number().int().positive().default(10),
+
   // Presence tunables (see modules/presence/presence.service.ts). Defaults match
   // the service's historical values so behaviour is unchanged when unset.
   PRESENCE_WINDOW_SEC: z.coerce.number().int().positive().default(60),

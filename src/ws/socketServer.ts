@@ -9,6 +9,7 @@ import { createChatService } from '@/modules/chat/chat.service.js';
 import { createBookingsService } from '@/modules/bookings/bookings.service.js';
 import type { Notifier } from '@/lib/notifier.js';
 import { SendMessageBody } from '@/modules/chat/chat.schemas.js';
+import { env } from '@/config/env.js';
 
 // Socket payloads are untrusted input — same Zod rules as the REST twins.
 const BookingRef = z.object({ booking_id: z.string().uuid() });
@@ -16,6 +17,7 @@ const ChatSendPayload = BookingRef.extend({
   text: SendMessageBody.shape.text,
   client_msg_id: SendMessageBody.shape.clientMsgId,
 });
+const MessageRef = z.object({ message_id: z.string().uuid() });
 
 /**
  * Socket.IO server — mounted on the same HTTP server as REST in the MVP
@@ -36,6 +38,26 @@ const ChatSendPayload = BookingRef.extend({
 
 const CHAT_SEND_LIMIT_PER_MIN = 20;
 const TYPING_LIMIT_PER_10S = 10;
+const CHAT_JOIN_LIMIT_PER_MIN = 30;
+
+/** Per-socket sliding-window limiter — returns true while under `limit`. */
+function windowLimiter(limit: number, windowMs: number): () => boolean {
+  const times: number[] = [];
+  return () => {
+    const now = Date.now();
+    while (times.length && now - times[0]! > windowMs) times.shift();
+    if (times.length >= limit) return false;
+    times.push(now);
+    return true;
+  };
+}
+
+function logSocketLimit(userId: string, limiter: string): void {
+  logger.warn({ event: 'abuse.limit_hit', userId, limiter }, 'abuse.limit_hit');
+}
+
+// Live user connections per user id (single process) — caps socket floods.
+const connectionsPerUser = new Map<string, number>();
 
 // A socket is either a user connection (userId set, joins user/chat rooms) or an
 // admin connection (adminId set, joins only the admin:<id> room, no chat access).
@@ -45,6 +67,8 @@ interface AuthedSocket extends Socket {
     phone?: string;
     roles?: string[];
     adminId?: string;
+    /** Access-token expiry (unix seconds) — the socket is dropped then (M1). */
+    exp?: number;
   };
 }
 
@@ -98,10 +122,15 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
           });
           if (!user || user.deletedAt) return next(new Error('auth_failed'));
           if (user.isBlocked) return next(new Error('forbidden'));
+          if ((connectionsPerUser.get(decoded.sub) ?? 0) >= env.WS_MAX_CONNECTIONS_PER_USER) {
+            logSocketLimit(decoded.sub, 'ws_connections');
+            return next(new Error('too_many_connections'));
+          }
           (socket as AuthedSocket).data = {
             userId: decoded.sub,
             phone: decoded.phone,
             roles: decoded.roles,
+            exp: decoded.exp,
           };
           return next();
         }
@@ -113,7 +142,7 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
           select: { isActive: true },
         });
         if (!adminRow || !adminRow.isActive) return next(new Error('auth_failed'));
-        (socket as AuthedSocket).data = { adminId: admin.sub };
+        (socket as AuthedSocket).data = { adminId: admin.sub, exp: admin.exp };
         return next();
       } catch (err) {
         logger.debug({ err }, 'socket handshake rejected');
@@ -124,6 +153,7 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
 
   io.on('connection', (rawSocket: Socket) => {
     const socket = rawSocket as AuthedSocket;
+    scheduleExpiry(socket);
 
     // Admin connection: join only the admin room and register no chat/booking
     // handlers. This is what makes notifier.ts admin:<id> emits deliverable.
@@ -139,21 +169,20 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
 
     const userId = socket.data.userId!;
     socket.join(`user:${userId}`);
+    connectionsPerUser.set(userId, (connectionsPerUser.get(userId) ?? 0) + 1);
 
     logger.debug({ userId, socketId: socket.id }, 'socket connected');
 
-    // Per-socket sliding-window rate limiter — simple array of timestamps.
-    const sendTimes: number[] = [];
-    const canSend = (): boolean => {
-      const now = Date.now();
-      while (sendTimes.length && now - sendTimes[0]! > 60_000) sendTimes.shift();
-      if (sendTimes.length >= CHAT_SEND_LIMIT_PER_MIN) return false;
-      sendTimes.push(now);
-      return true;
-    };
+    const canSend = windowLimiter(CHAT_SEND_LIMIT_PER_MIN, 60_000);
+    const canJoin = windowLimiter(CHAT_JOIN_LIMIT_PER_MIN, 60_000);
 
     // ─── chat:join ───────────────────────────────────────────────────
     socket.on('chat:join', async (raw: unknown) => {
+      if (!canJoin()) {
+        logSocketLimit(userId, 'ws_chat_join');
+        socket.emit('chat:error', { code: 'RATE_LIMITED' });
+        return;
+      }
       const parsed = BookingRef.safeParse(raw);
       if (!parsed.success) {
         socket.emit('chat:error', { code: 'VALIDATION_ERROR' });
@@ -188,6 +217,7 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
       'chat:send',
       async (raw: unknown) => {
         if (!canSend()) {
+          logSocketLimit(userId, 'ws_chat_send');
           socket.emit('chat:error', { code: 'RATE_LIMITED' });
           return;
         }
@@ -228,30 +258,28 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
       },
     );
 
-    socket.on('chat:read', async ({ message_id }: { message_id: string }) => {
+    socket.on('chat:read', async (raw: unknown) => {
+      const parsed = MessageRef.safeParse(raw);
+      if (!parsed.success) return;
       try {
-        await chat.markRead(message_id, userId);
+        await chat.markRead(parsed.data.message_id, userId);
       } catch (err) {
         logger.debug({ err }, 'chat:read ignored');
       }
     });
 
-    socket.on('chat:leave', ({ booking_id }: { booking_id: string }) => {
-      void socket.leave(`chat:${booking_id}`);
+    socket.on('chat:leave', (raw: unknown) => {
+      const parsed = BookingRef.safeParse(raw);
+      if (parsed.success) void socket.leave(`chat:${parsed.data.booking_id}`);
     });
 
     // typing has its own sliding-window limiter — clients fire it on every
     // keystroke, so cap the relay rate to avoid flooding the room.
-    const typingTimes: number[] = [];
-    const canType = (): boolean => {
-      const now = Date.now();
-      while (typingTimes.length && now - typingTimes[0]! > 10_000) typingTimes.shift();
-      if (typingTimes.length >= TYPING_LIMIT_PER_10S) return false;
-      typingTimes.push(now);
-      return true;
-    };
-    socket.on('chat:typing', ({ booking_id }: { booking_id: string }) => {
-      if (typeof booking_id !== 'string' || !booking_id) return;
+    const canType = windowLimiter(TYPING_LIMIT_PER_10S, 10_000);
+    socket.on('chat:typing', (raw: unknown) => {
+      const parsed = BookingRef.safeParse(raw);
+      if (!parsed.success) return;
+      const { booking_id } = parsed.data;
       // Only relay for rooms this socket actually joined (chat:join already
       // verified membership + status) — otherwise a client could spoof typing
       // into arbitrary chats it isn't part of.
@@ -265,18 +293,39 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
     // TZ §13.3/§13.4 "Новое: водитель открыл карточку запроса". Stamp
     // viewed_at and emit booking:viewed to the passenger (markViewed checks
     // that the caller is the trip's driver). Mirrors REST GET /bookings/:id.
-    socket.on('booking:view', async ({ booking_id }: { booking_id: string }) => {
+    socket.on('booking:view', async (raw: unknown) => {
+      const parsed = BookingRef.safeParse(raw);
+      if (!parsed.success) return;
       try {
-        await bookings.markViewed(booking_id, userId);
+        await bookings.markViewed(parsed.data.booking_id, userId);
       } catch (err) {
         logger.debug({ err, userId }, 'booking:view ignored');
       }
     });
 
     socket.on('disconnect', (reason) => {
+      const left = (connectionsPerUser.get(userId) ?? 1) - 1;
+      if (left > 0) connectionsPerUser.set(userId, left);
+      else connectionsPerUser.delete(userId);
       logger.debug({ userId, socketId: socket.id, reason }, 'socket disconnected');
     });
   });
+}
+
+// M1: a socket authenticated with a 15-minute access token must not live on
+// for hours. At expiry the client gets `auth:expired`, then the socket is
+// dropped; the client refreshes its token and reconnects.
+function scheduleExpiry(socket: AuthedSocket): void {
+  if (!env.WS_DISCONNECT_ON_TOKEN_EXPIRY || !socket.data.exp) return;
+  const expire = (): void => {
+    socket.emit('auth:expired', { reason: 'token_expired' });
+    socket.disconnect(true);
+  };
+  const ms = socket.data.exp * 1000 - Date.now();
+  if (ms <= 0) return expire();
+  const timer = setTimeout(expire, ms);
+  timer.unref();
+  socket.on('disconnect', () => clearTimeout(timer));
 }
 
 function extractToken(socket: Socket): string | null {

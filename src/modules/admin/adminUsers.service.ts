@@ -229,6 +229,7 @@ export function createAdminUsersService(
     });
 
     await notifier.accountBlocked(id, { reason });
+    await notifier.disconnectUser(id);
 
     return get(id);
   }

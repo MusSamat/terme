@@ -6,6 +6,7 @@ import { cursorArgs, sliceAndNext } from '@/lib/pagination.js';
 import { filterPhoneNumbers } from '@/lib/phoneFilter.js';
 import { filterSocialLinks } from '@/lib/socialFilter.js';
 import type { Notifier } from '@/lib/notifier.js';
+import { assertActiveUser } from '@/lib/assertUser.js';
 
 // ─── Chat access window ─────────────────────────────────────────────
 const POST_COMPLETION_WRITE_WINDOW_HOURS = 48;
@@ -137,6 +138,8 @@ export function createChatService(prisma: PrismaClient, notifier: Notifier): Cha
     text: string,
     clientMsgId?: string,
   ): Promise<{ message: ChatMessage; clientMsgId?: string }> {
+    // M1: sockets outlive a block — re-check on every write.
+    await assertActiveUser(senderId, prisma);
     const bk = await loadBooking(bookingId);
     if (!bk) throw Errors.notFound('Booking');
     assertCanWrite(bk, senderId);
@@ -210,6 +213,7 @@ export function createChatService(prisma: PrismaClient, notifier: Notifier): Cha
   }
 
   async function markRead(messageId: string, viewerId: string): Promise<ChatMessage> {
+    await assertActiveUser(viewerId, prisma);
     const msg = await prisma.message.findUnique({
       where: { id: messageId },
       include: {

@@ -203,6 +203,7 @@ export function createSessionMethods(prisma: PrismaClient, notifier: Notifier) {
       where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    await notifier.disconnectUser(userId);
   }
 
   // Admin refresh — verifies the JWT signature, checks the admin is still

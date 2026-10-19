@@ -13,7 +13,13 @@ import {
 } from '../../tests/factories.js';
 import { createApp } from '@/server.js';
 import { createIoServer, attachChatNamespace } from './socketServer.js';
-import { createInProcessNotifier } from '@/lib/notifier.js';
+import { createInProcessNotifier, NoopNotifier } from '@/lib/notifier.js';
+import { randomUUID } from 'node:crypto';
+import jwt from 'jsonwebtoken';
+import { env } from '@/config/env.js';
+import { createChatService } from '@/modules/chat/chat.service.js';
+
+const ACCESS_CLAIMS = {};
 
 let server: http.Server;
 let io: IoServer;
@@ -252,5 +258,61 @@ describe('WS real-time notifications (#11)', () => {
     const evt = await pushed;
     expect(evt.booking.id).toBe(booking.body.id);
     ps.close();
+  });
+});
+
+describe('socket lifecycle hardening (M1)', () => {
+  const waitConnect = (s: ClientSocket) => waitForEvent(s, 'connect');
+
+  it('logout/all drops the user\'s live sockets', async () => {
+    const u = await createUser(testPrisma);
+    const s = connectSocket(u.accessToken);
+    await waitConnect(s);
+    const dropped = waitForEvent<string>(s, 'disconnect');
+    const res = await request(app)
+      .post('/v1/auth/logout/all')
+      .set('Authorization', `Bearer ${u.accessToken}`);
+    expect(res.status).toBe(204);
+    expect(await dropped).toBe('io server disconnect');
+  });
+
+  it('emits auth:expired and disconnects when the access token expires', async () => {
+    const u = await createUser(testPrisma);
+    const shortLived = jwt.sign(
+      { sub: u.id, phone: u.phone, roles: ['passenger'], kind: 'access' },
+      env.JWT_ACCESS_SECRET,
+      { algorithm: 'HS256', expiresIn: 2, ...ACCESS_CLAIMS },
+    );
+    const s = connectSocket(shortLived);
+    await waitConnect(s);
+    await waitForEvent(s, 'auth:expired', 4000);
+    s.close();
+  });
+
+  it('caps concurrent sockets per user', async () => {
+    const saved = env.WS_MAX_CONNECTIONS_PER_USER;
+    env.WS_MAX_CONNECTIONS_PER_USER = 2;
+    const u = await createUser(testPrisma);
+    const a = connectSocket(u.accessToken);
+    const b = connectSocket(u.accessToken);
+    try {
+      await Promise.all([waitConnect(a), waitConnect(b)]);
+      const c = connectSocket(u.accessToken);
+      const err = await waitForEvent<Error>(c, 'connect_error');
+      expect(err.message).toBe('too_many_connections');
+      c.close();
+    } finally {
+      env.WS_MAX_CONNECTIONS_PER_USER = saved;
+      a.close();
+      b.close();
+    }
+  });
+
+  it('chat.send / markRead re-check that the user is still active', async () => {
+    const u = await createUser(testPrisma);
+    await testPrisma.user.update({ where: { id: u.id }, data: { isBlocked: true } });
+    const chat = createChatService(testPrisma, new NoopNotifier());
+    await expect(chat.send(randomUUID(), u.id, 'hi')).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(chat.markRead(randomUUID(), u.id)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

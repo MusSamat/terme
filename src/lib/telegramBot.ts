@@ -350,6 +350,9 @@ export function createTelegramNotifier(deps: TelegramNotifierDeps): Notifier {
     async tripCompletedRate() {
       // In-app rating prompt only — no Telegram noise.
     },
+    async disconnectUser() {
+      // Sockets only — nothing to do on Telegram.
+    },
   };
 }
 
@@ -407,6 +410,7 @@ export function composeNotifiers(...notifiers: Notifier[]): Notifier {
     requestResponseAccepted: call('requestResponseAccepted'),
     requestResponseDeclined: call('requestResponseDeclined'),
     tripCompletedRate: call('tripCompletedRate'),
+    disconnectUser: call('disconnectUser'),
   };
 }
 

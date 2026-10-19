@@ -79,6 +79,9 @@ export interface Notifier {
    * carry category, resource ids, etc. Returns the set of admin IDs notified.
    */
   broadcastToAdmins(type: string, payload: Record<string, unknown>): Promise<void>;
+
+  /** M1: drop every live socket of the user (block, logout-all, account delete). */
+  disconnectUser(userId: string): Promise<void>;
 }
 
 export interface PublicBooking {
@@ -258,6 +261,9 @@ export function createInProcessNotifier(prisma: PrismaClient, io: IoServer): Not
       );
       for (const a of admins) io.to(`admin:${a.id}`).emit('notification:new', { type, payload });
     },
+    async disconnectUser(userId) {
+      io.in(`user:${userId}`).disconnectSockets(true);
+    },
   };
 }
 
@@ -348,6 +354,9 @@ export class NoopNotifier implements Notifier {
   }
   async broadcastToAdmins(type: string, payload: Record<string, unknown>) {
     this.push('__admins__', type, payload);
+  }
+  async disconnectUser(u: string) {
+    this.push(u, 'socket:disconnect', {});
   }
 
   findForUser(userId: string, event?: string): typeof this.events {
