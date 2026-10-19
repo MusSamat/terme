@@ -16,19 +16,23 @@ export async function issueTokenPair(
   phone: string,
   roles: Role[],
   deviceInfo: string | null | undefined,
+  // H4: rotation passes the family + the pre-allocated successor id; a fresh
+  // login starts a new family (family_id = token id).
+  opts: { familyId?: string; tokenId?: string } = {},
 ): Promise<TokenPair> {
   const accessToken = signAccessToken({
     sub: userId,
     phone: publicPhone(phone) || phone,
     roles,
   });
-  const tokenId = generateUuid();
+  const tokenId = opts.tokenId ?? generateUuid();
   const refreshTtl = refreshTtlSeconds();
   const refreshToken = signRefreshToken({ sub: userId, tokenId }, refreshTtl);
 
   await prisma.refreshToken.create({
     data: {
       id: tokenId,
+      familyId: opts.familyId ?? tokenId,
       userId,
       tokenHash: sha256Hex(refreshToken),
       deviceInfo: deviceInfo ?? null,

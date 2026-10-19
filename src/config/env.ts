@@ -38,6 +38,9 @@ const EnvSchema = z.object({
   // TZ v2.1: no fixed refresh TTL — extends on activity. 30 days of inactivity
   // = forced logout. Cleanup cron enforces the deadline via expires_at.
   JWT_REFRESH_INACTIVITY_DAYS: z.coerce.number().int().positive().default(30),
+  // H4: refresh reuse handling. 'log' only logs what 'enforce' would do (no
+  // family revoke, no alert); 'enforce' revokes the family + security alert.
+  REFRESH_REUSE_MODE: z.enum(['log', 'enforce']).default('log'),
 
   TELEGRAM_BOT_TOKEN: z.string().default(''),
   TELEGRAM_BOT_USERNAME: z.string().default('terme_kg_bot'),

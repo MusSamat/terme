@@ -367,11 +367,16 @@ model RefreshToken {
   // NULL a second time is the Token Reuse Detection trigger (TZ v2.1 §7.5).
   usedAt     DateTime? @map("used_at") @db.Timestamptz(6)
   revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  // H4: token family = one login; rotations inherit it. Reuse detection
+  // revokes the family only. replacedById = the token this one rotated into.
+  familyId     String    @default(dbgenerated("gen_random_uuid()")) @map("family_id") @db.Uuid
+  replacedById String?   @map("replaced_by_id") @db.Uuid
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([familyId])
   @@index([expiresAt])
   @@map("refresh_tokens")
 }

@@ -188,14 +188,21 @@ Telegram-бот:  кнопка «Поделиться номером» (Telegram
                users.telegram_id; дальше бот узнаёт пользователя сам.
 ```
 
-**Token Reuse Detection — grace-окно + revoke-all вне него (auth.session.ts):**
+**Token Reuse Detection — семейства токенов (auth.session.ts, refresh_tokens.family_id):**
 ```typescript
-// При /auth/refresh, если refresh-токен уже ротирован (used):
-//   • в пределах GRACE_MS (60s) → ретрай/гонка клиента: вернуть ТУ ЖЕ ранее
-//     выданную пару из кэша (по rotatedTokenId), НЕ минтить новую и НЕ
-//     разлогинивать (иначе ложные логауты при двойном запросе клиента).
-//   • вне grace-окна → реальный reuse украденного токена: revoke ВСЕХ refresh
-//     токенов пользователя + 401 { code: 'TOKEN_REUSE_DETECTED' } + лог-событие.
+// Вход = новое семейство (family_id = id). Ротация наследует family_id, у старого
+// токена usedAt+revokedAt и replaced_by_id = id преемника.
+// /auth/refresh с уже ротированным/отозванным токеном:
+//   • в пределах GRACE_MS (60s) после ротации → ретрай/гонка клиента: вернуть ТУ ЖЕ
+//     пару из кэша (по rotatedTokenId), не разлогинивать.
+//   • revoked, но не used (logout / reset / block) → 401 refresh_revoked, без тревоги.
+//   • вне grace, преемник НЕ использован (клиент его не сохранил) → безобидно:
+//     отозвать преемника, 401 refresh_rotated, info-лог.
+//   • вне grace, преемник УЖЕ использован → реальный reuse: отозвать ТОЛЬКО это
+//     семейство + notifier.securityAlertReuse + 401 details.code TOKEN_REUSE_DETECTED.
+// Флаг REFRESH_REUSE_MODE=log|enforce (по умолчанию log): в log только логируется,
+// что сделал бы enforce (refresh.reuse_detected / refresh.stale_replay), ничего не
+// отзывается — отклоняется лишь этот токен (401 refresh_rotated).
 // Клиенты (web/mobile) обязаны трактовать TOKEN_REUSE_DETECTED как форс-логаут.
 ```
 

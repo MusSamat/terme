@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, RefreshToken } from '@prisma/client';
 import { env } from '@/config/env.js';
 import { Errors } from '@/lib/errors.js';
 import {
@@ -7,7 +7,7 @@ import {
   signAdminAccessToken,
   type Role,
 } from '@/lib/jwt.js';
-import { sha256Hex } from '@/lib/random.js';
+import { generateUuid, sha256Hex } from '@/lib/random.js';
 import { logger } from '@/lib/logger.js';
 import type { Notifier } from '@/lib/notifier.js';
 import type { TokenPair, AdminRefreshResult } from './auth.types.js';
@@ -17,9 +17,8 @@ import { issueTokenPair } from './auth.helpers.js';
 // treated as a legit client retry (concurrent refresh, or an app restart/update
 // that killed the process before the rotated cookie was persisted). We return
 // the SAME pair we already minted for that rotation instead of either minting a
-// brand-new pair on every replay (H2 — token sprawl / weak single-use) or
-// logging the user out (false positive). Outside the window, a replay of an
-// already-rotated token is a real reuse → revoke everything.
+// brand-new pair on every replay (token sprawl / weak single-use) or logging
+// the user out (false positive). Outside the window see rejectStaleReplay.
 const GRACE_MS = 60_000;
 
 // In-memory replay cache: rotated tokenId → the pair we issued for it (+ when).
@@ -58,10 +57,67 @@ function cachedPairWithinGrace(rotatedTokenId: string): TokenPair | null {
   return hit.pair;
 }
 
-// `_notifier` is kept in the signature (not currently used) — the reuse alert
-// that consumed it is temporarily disabled; re-enable in refresh() below.
-export function createSessionMethods(prisma: PrismaClient, _notifier: Notifier) {
-  // Token Reuse Detection per TZ §7.5
+export function createSessionMethods(prisma: PrismaClient, notifier: Notifier) {
+  // H4: a token that was already rotated (or revoked) is replayed OUTSIDE the
+  // grace window. Decide using the token family:
+  //   • revoked, never used (logout / reset / block)   → 401 refresh_revoked
+  //   • successor never used (client lost it)          → benign: revoke the
+  //     successor, 401 refresh_rotated, info log
+  //   • successor already used                         → real reuse: revoke the
+  //     FAMILY, security alert, 401 TOKEN_REUSE_DETECTED
+  // REFRESH_REUSE_MODE=log only logs what enforce would do and rejects this
+  // one token (no revocations, no alert).
+  async function rejectStaleReplay(stored: RefreshToken, ip: string | null): Promise<never> {
+    if (stored.usedAt === null) throw Errors.unauthorized({ reason: 'refresh_revoked' });
+    const enforce = env.REFRESH_REUSE_MODE === 'enforce';
+    const successor = stored.replacedById
+      ? await prisma.refreshToken.findUnique({ where: { id: stored.replacedById } })
+      : null;
+    const ctx = {
+      userId: stored.userId,
+      tokenId: stored.id,
+      familyId: stored.familyId,
+      successorId: successor?.id ?? null,
+      ip,
+      mode: env.REFRESH_REUSE_MODE,
+    };
+
+    if (successor?.usedAt) {
+      if (!enforce) {
+        logger.warn({ event: 'refresh.reuse_detected', action: 'would_revoke_family', ...ctx }, 'refresh reuse (log mode)');
+        throw Errors.unauthorized({ reason: 'refresh_rotated' });
+      }
+      await prisma.refreshToken.updateMany({
+        where: { familyId: stored.familyId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      replayCache.delete(stored.id);
+      logger.warn({ event: 'refresh.reuse_detected', action: 'family_revoked', ...ctx }, 'refresh reuse — family revoked');
+      void notifier
+        .securityAlertReuse(stored.userId, { reusedAt: new Date(), ip })
+        .catch((err) => logger.error({ err, userId: stored.userId }, 'reuse alert failed'));
+      throw Errors.unauthorized({ reason: 'token_reuse_detected', code: 'TOKEN_REUSE_DETECTED' });
+    }
+
+    const live = successor !== null && successor.revokedAt === null;
+    if (live && enforce) {
+      await prisma.refreshToken.updateMany({
+        where: { id: successor.id, usedAt: null, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
+    logger.info(
+      {
+        event: 'refresh.stale_replay',
+        action: !live ? 'none' : enforce ? 'successor_revoked' : 'would_revoke_successor',
+        ...ctx,
+      },
+      'stale refresh replay outside grace',
+    );
+    throw Errors.unauthorized({ reason: 'refresh_rotated' });
+  }
+
+  // Token Reuse Detection per TZ §7.5 (families, see rejectStaleReplay).
   async function refresh(
     token: string,
     deviceInfo: string | undefined,
@@ -80,51 +136,30 @@ export function createSessionMethods(prisma: PrismaClient, _notifier: Notifier) 
       stored.usedAt !== null && Date.now() - stored.usedAt.getTime() < GRACE_MS;
 
     if (alreadyRotated) {
-      if (withinGrace) {
-        // Legit retry: hand back the exact pair we already issued for this
-        // rotation so the client converges on one token instead of spawning a
-        // new pair on every replay.
-        const cached = cachedPairWithinGrace(stored.id);
-        if (cached) return cached;
-        // Cache miss inside grace (e.g. after a restart) → fall through and mint
-        // a single fresh pair for this rotation, then cache it.
-      } else {
-        // TEMP (MVP): the reuse detector was false-positiving on legitimate
-        // single-device use (a stale token replayed after the 60s grace window —
-        // e.g. the app resumes from background with an in-memory token it already
-        // rotated), nuking EVERY session and pushing an alarming "all devices
-        // logged out" notification. Disabled for now: we just reject THIS stale
-        // refresh so the one device re-logs in, WITHOUT revoking other sessions
-        // and WITHOUT the security alert. Re-enable the revoke-all +
-        // securityAlertReuse below once rotation races are fully ironed out.
-        //
-        //   await prisma.refreshToken.updateMany({
-        //     where: { userId: stored.userId, revokedAt: null },
-        //     data: { revokedAt: new Date() },
-        //   });
-        //   replayCache.delete(stored.id);
-        //   void notifier
-        //     .securityAlertReuse(stored.userId, { reusedAt: new Date(), ip })
-        //     .catch((err) => logger.error({ err, userId: stored.userId }, 'reuse alert failed'));
-        //   throw Errors.unauthorized({ reason: 'token_reuse_detected', code: 'TOKEN_REUSE_DETECTED' });
-        logger.warn(
-          { userId: stored.userId, tokenId: stored.id, ip },
-          'stale refresh replay outside grace — rejecting this token only (reuse revoke-all disabled)',
-        );
-        throw Errors.unauthorized({ reason: 'refresh_rotated' });
-      }
+      if (!withinGrace) await rejectStaleReplay(stored, ip);
+      // Legit retry: hand back the exact pair we already issued for this
+      // rotation so the client converges on one token instead of spawning a
+      // new pair on every replay.
+      const cached = cachedPairWithinGrace(stored.id);
+      if (cached) return cached;
+      // Cache miss inside grace (e.g. after a restart) → fall through and mint
+      // a single fresh pair for this rotation (same family), then cache it.
     }
 
     if (stored.expiresAt.getTime() <= Date.now()) {
       throw Errors.unauthorized({ reason: 'refresh_expired' });
     }
 
+    const successorId = generateUuid();
+    let isSuccessor = false;
     if (!alreadyRotated) {
+      const now = new Date();
       const markRes = await prisma.refreshToken.updateMany({
         where: { id: stored.id, usedAt: null, revokedAt: null },
-        data: { usedAt: new Date(), revokedAt: new Date() },
+        data: { usedAt: now, revokedAt: now, replacedById: successorId },
       });
-      if (markRes.count !== 1) {
+      isSuccessor = markRes.count === 1;
+      if (!isSuccessor) {
         // Lost the mark race by a hair — the winning refresh already rotated it
         // within the same tick. Prefer returning ITS cached pair so both callers
         // converge; if not yet cached, fall through and mint one for this tick.
@@ -147,6 +182,7 @@ export function createSessionMethods(prisma: PrismaClient, _notifier: Notifier) 
       user.phone,
       user.roles as Role[],
       deviceInfo ?? stored.deviceInfo,
+      { familyId: stored.familyId, ...(isSuccessor ? { tokenId: successorId } : {}) },
     );
     // Remember this rotation so a replay of `stored` inside the grace window
     // returns THIS pair rather than minting another.
