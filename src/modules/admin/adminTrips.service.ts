@@ -5,6 +5,16 @@ import type { CursorPaginationInput } from '@/lib/pagination.js';
 import { writeAdminAction } from './admin.audit.js';
 import type { Notifier } from '@/lib/notifier.js';
 
+const LIVE_BOOKING = ['pending', 'viewed', 'accepted'];
+
+type TripsFilter = CursorPaginationInput & {
+  status?: string;
+  from?: string;
+  to?: string;
+  from_id?: number;
+  to_id?: number;
+};
+
 export interface AdminTripItem {
   id: string;
   originCity: string;
@@ -44,7 +54,7 @@ export interface AdminTripDetail extends AdminTripItem {
 
 export interface AdminTripsService {
   listTrips(
-    filter: CursorPaginationInput & { status?: string; from?: string; to?: string },
+    filter: TripsFilter,
   ): Promise<{ data: AdminTripItem[]; nextCursor: string | null }>;
   getTripDetail(id: string): Promise<AdminTripDetail>;
   forceCancel(
@@ -60,22 +70,32 @@ export function createAdminTripsService(
   notifier: Notifier,
 ): AdminTripsService {
   async function listTrips(
-    filter: CursorPaginationInput & { status?: string; from?: string; to?: string },
+    filter: TripsFilter,
   ): Promise<{ data: AdminTripItem[]; nextCursor: string | null }> {
     const where: Prisma.TripWhereInput = {};
     if (filter.status && filter.status !== 'all') where.status = filter.status;
-    if (filter.from) where.originCity = { contains: filter.from, mode: 'insensitive' };
-    if (filter.to) where.destinationCity = { contains: filter.to, mode: 'insensitive' };
+    // Match the place itself (ids are the truth), not the name_ru snapshot
+    // column — so a renamed settlement or a Kyrgyz spelling still finds it.
+    const placeName = (q: string): Prisma.CityWhereInput => ({
+      OR: [
+        { nameRu: { contains: q, mode: 'insensitive' } },
+        { nameKg: { contains: q, mode: 'insensitive' } },
+      ],
+    });
+    if (filter.from_id) where.originCityId = filter.from_id;
+    else if (filter.from) where.origin = placeName(filter.from);
+    if (filter.to_id) where.destinationCityId = filter.to_id;
+    else if (filter.to) where.destination = placeName(filter.to);
 
     const rows = await prisma.trip.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
       ...cursorArgs(filter),
       include: {
         driver: { select: { id: true, name: true, phone: true } },
         _count: {
           select: {
-            bookings: { where: { status: { in: ['pending', 'accepted'] } } },
+            bookings: { where: { status: { in: LIVE_BOOKING } } },
           },
         },
       },
@@ -143,7 +163,7 @@ export function createAdminTripsService(
       seatsAvailable: trip.seatsAvailable,
       comment: trip.comment,
       bookingsCount: trip.bookings.filter((b) =>
-        ['pending', 'accepted'].includes(b.status),
+        LIVE_BOOKING.includes(b.status),
       ).length,
       cancelledReason: trip.cancelledReason,
       driver: {
@@ -171,13 +191,20 @@ export function createAdminTripsService(
     reason: string,
     ip?: string | null,
   ): Promise<{ status: 'cancelled'; affectedPassengers: number }> {
-    const trip = await prisma.trip.findUnique({ where: { id: tripId } });
-    if (!trip) throw Errors.notFound('Trip');
-    if (trip.status !== 'active') {
-      throw Errors.conflict('Trip not active', { current_status: trip.status });
-    }
+    const { trip, passengerIds } = await prisma.$transaction(async (tx) => {
+      // Lock the trip row so a concurrent booking accept / driver cancel /
+      // completion can't interleave with the status check below.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM trips WHERE id = ${tripId}::uuid FOR UPDATE
+      `;
+      if (locked.length === 0) throw Errors.notFound('Trip');
+      const trip = await tx.trip.findUniqueOrThrow({ where: { id: tripId } });
+      // 'direct' trips (accepted passenger-request offers) share the active
+      // lifecycle and are cancellable by their driver — and so by an admin.
+      if (trip.status !== 'active' && trip.status !== 'direct') {
+        throw Errors.conflict('Trip not active', { current_status: trip.status });
+      }
 
-    const passengerIds = await prisma.$transaction(async (tx) => {
       await tx.trip.update({
         where: { id: tripId },
         data: {
@@ -186,19 +213,20 @@ export function createAdminTripsService(
           version: { increment: 1 },
         },
       });
+      // Every live booking — 'viewed' is still a live request.
       const affected = await tx.booking.findMany({
-        where: { tripId, status: { in: ['pending', 'accepted'] } },
+        where: { tripId, status: { in: LIVE_BOOKING } },
         select: { passengerId: true },
       });
       await tx.booking.updateMany({
-        where: { tripId, status: { in: ['pending', 'accepted'] } },
+        where: { tripId, status: { in: LIVE_BOOKING } },
         data: {
           status: 'cancelled_by_driver', // closest match — admin cancel counts as driver-side
           cancelledBy: 'driver',
           cancelledAt: new Date(),
         },
       });
-      return affected.map((a) => a.passengerId);
+      return { trip, passengerIds: affected.map((a) => a.passengerId) };
     });
 
     const publicTrip = {

@@ -195,6 +195,14 @@ export function createAuthRouter(prisma: PrismaClient, notifier: Notifier): Rout
     }),
   );
 
+  // Admin sign-out. Admin refresh tokens are stateless (revocable only en masse
+  // via the admin.updatedAt epoch), so sign-out = drop the HttpOnly cookie.
+  // Public on purpose: it must work with an expired access token.
+  router.post('/admin/logout', (req, res) => {
+    clearRefreshCookie(res, REFRESH_COOKIE.admin, req);
+    res.status(204).send();
+  });
+
   router.post(
     '/admin/refresh',
     validate({ body: AdminRefreshBody }),

@@ -60,6 +60,7 @@ exports[`OpenAPI drift-guard > API surface (METHOD + path) matches the snapshot 
   "PATCH /users/me/phone/confirm",
   "POST /admin/admins",
   "POST /auth/admin/login",
+  "POST /auth/admin/logout",
   "POST /auth/check-phone",
   "POST /auth/logout",
   "POST /auth/logout/all",

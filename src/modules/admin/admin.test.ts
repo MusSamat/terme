@@ -281,3 +281,33 @@ describe('Admin audit log', () => {
     expect(log.body.data.some((r: { adminId: string }) => r.adminId === a.id)).toBe(true);
   });
 });
+
+describe('PATCH /v1/admin/trips/:id/cancel', () => {
+  it("cancels 'viewed' bookings too (every live request), not just pending/accepted", async () => {
+    const admin = await createAdmin(testPrisma);
+    const driver = await createUser(testPrisma);
+    const passenger = await createUser(testPrisma);
+    const city = await testPrisma.city.findFirstOrThrow({ where: { type: 'capital' } });
+    const other = await testPrisma.city.findFirstOrThrow({ where: { type: 'capital', NOT: { id: city.id } } });
+    const trip = await testPrisma.trip.create({
+      data: {
+        driverId: driver.id,
+        originCityId: city.id, originCity: city.nameRu,
+        destinationCityId: other.id, destinationCity: other.nameRu,
+        departureAt: new Date(Date.now() + 5 * 60 * 60_000),
+        estimatedDurationMin: 300, seatsTotal: 3, seatsAvailable: 3, pricePerSeat: 500,
+      },
+    });
+    const bk = await testPrisma.booking.create({
+      data: { tripId: trip.id, passengerId: passenger.id, seatsCount: 1, status: 'viewed' },
+    });
+    const res = await request(app)
+      .patch(`/v1/admin/trips/${trip.id}/cancel`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ reason: 'fraud report' });
+    expect(res.status).toBe(200);
+    expect(res.body.affectedPassengers).toBe(1);
+    const row = await testPrisma.booking.findUniqueOrThrow({ where: { id: bk.id } });
+    expect(row.status).toBe('cancelled_by_driver');
+  });
+});

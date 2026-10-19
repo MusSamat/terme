@@ -200,22 +200,29 @@ export function createAdminAnalyticsService(prisma: PrismaClient): AdminAnalytic
   }
 
   async function chartTopRoutes(days: number): Promise<
-    Array<{ from: string; to: string; count: number }>
+    Array<{ from: string; to: string; fromId: number; toId: number; count: number }>
   > {
     const since = new Date(Date.now() - days * 24 * 60 * 60_000);
+    // Grouped by place ids (the truth) — the name_ru snapshot columns split one
+    // route in two whenever a settlement was renamed.
     const rows = await prisma.$queryRaw<
-      Array<{ origin_city: string; destination_city: string; count: bigint }>
+      Array<{ from_id: number; to_id: number; from_name: string; to_name: string; count: bigint }>
     >`
-      SELECT origin_city, destination_city, COUNT(*)::bigint AS count
-      FROM trips
-      WHERE created_at >= ${since}
-      GROUP BY 1, 2
+      SELECT t.origin_city_id AS from_id, t.destination_city_id AS to_id,
+             o.name_ru AS from_name, d.name_ru AS to_name, COUNT(*)::bigint AS count
+      FROM trips t
+      JOIN cities o ON o.id = t.origin_city_id
+      JOIN cities d ON d.id = t.destination_city_id
+      WHERE t.created_at >= ${since}
+      GROUP BY 1, 2, 3, 4
       ORDER BY count DESC
       LIMIT 10
     `;
     return rows.map((r) => ({
-      from: r.origin_city,
-      to: r.destination_city,
+      from: r.from_name,
+      to: r.to_name,
+      fromId: r.from_id,
+      toId: r.to_id,
       count: Number(r.count),
     }));
   }

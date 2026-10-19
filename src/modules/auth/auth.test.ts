@@ -272,6 +272,21 @@ describe('POST /v1/auth/admin/login', () => {
   });
 });
 
+describe('POST /v1/auth/admin/logout', () => {
+  it('clears the admin refresh cookie without needing an access token', async () => {
+    const res = await request(app)
+      .post('/v1/auth/admin/logout')
+      .set('Cookie', 'terme_admin_rt=stale-token')
+      .send({ channel: 'web' });
+    expect(res.status).toBe(204);
+    const cookies = ([] as string[]).concat(res.headers['set-cookie'] ?? []);
+    const cleared = cookies.find((c) => c.startsWith('terme_admin_rt='));
+    expect(cleared).toBeDefined();
+    expect(cleared).toMatch(/Expires=Thu, 01 Jan 1970/);
+    expect(cleared).toMatch(/Path=\/v1\/auth/);
+  });
+});
+
 describe('GET /health', () => {
   it('returns 200 when DB is reachable', async () => {
     const res = await request(app).get('/health');

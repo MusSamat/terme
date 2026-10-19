@@ -718,6 +718,16 @@ export const openapiDocument = {
         responses: { '204': { description: 'Revoked' }, ...errorResponses },
       },
     },
+    '/auth/admin/logout': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Admin sign-out: clears the HttpOnly admin refresh cookie',
+        description:
+          'Admin refresh tokens are stateless JWTs (no per-token store), so this '
+          + 'clears the terme_admin_rt cookie; the client must also drop its in-memory access token.',
+        responses: { '204': { description: 'Signed out' }, ...errorResponses },
+      },
+    },
     '/auth/logout/all': {
       post: {
         tags: ['Auth'],

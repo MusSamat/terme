@@ -138,9 +138,13 @@ export const ComplaintResolveBody = z.object({
 
 // ─── Trips ───────────────────────────────────────────────────────────────
 export const TripsAdminQuery = CursorPaginationQuery.extend({
-  status: z.enum(['active', 'completed', 'cancelled', 'all']).default('active'),
+  status: z.enum(['active', 'direct', 'completed', 'cancelled', 'all']).default('active'),
+  // Free text matched against the place (name_ru / name_kg) …
   from: z.string().trim().max(50).optional(),
   to: z.string().trim().max(50).optional(),
+  // … or an exact SOATE place id (preferred — ids are the truth).
+  from_id: z.coerce.number().int().positive().optional(),
+  to_id: z.coerce.number().int().positive().optional(),
 });
 
 export const TripIdParam = z.object({ id: z.string().uuid() });

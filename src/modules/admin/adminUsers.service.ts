@@ -112,7 +112,9 @@ export function createAdminUsersService(
 
     const rows = await prisma.user.findMany({
       where,
-      orderBy: orderBy(filter.sort),
+      // id tiebreaker: Prisma's cursor compares on every orderBy column, so a
+      // non-unique key alone (many users share rating 0) made pages skip/repeat.
+      orderBy: [orderBy(filter.sort), { id: 'asc' }],
       ...cursorArgs(filter),
       include: {
         driverProfile: { select: { totalTrips: true } },
