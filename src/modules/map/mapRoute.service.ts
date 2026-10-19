@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { bishkekDayRange } from '@/lib/dates.js';
+import { rankByTarget } from '@/lib/airport.js';
 import { nearbyPlaceIds } from '@/lib/places.js';
 import { toFileUrl } from '@/lib/uploads.js';
 import type { MapRouteQueryInput } from '@/modules/cities/cities.schemas.js';
@@ -24,6 +25,8 @@ export interface MapRouteItem {
   destination: PlaceName;
   // Driver (trips) or passenger (requests).
   user: { id: string; name: string; avatarUrl: string | null; rating: number | null; ratingCount: number };
+  // Only with target_time: departure within ±2h of the target.
+  nearTarget?: boolean;
 }
 
 interface PlaceName {
@@ -41,8 +44,9 @@ const userSelect = {
 } as const;
 
 export function createMapRouteService(prisma: PrismaClient) {
-  function departureRange(date: string | undefined): { gte: Date; lt?: Date } {
+  function departureRange(q: MapRouteQueryInput): { gte: Date; lt?: Date } {
     const now = new Date();
+    const date = q.target_time ?? q.date;
     if (!date) return { gte: now };
     const { start, end } = bishkekDayRange(new Date(date));
     return { gte: start > now ? start : now, lt: end };
@@ -53,7 +57,7 @@ export function createMapRouteService(prisma: PrismaClient) {
       where: {
         status: 'active',
         seatsAvailable: { gte: 1 },
-        departureAt: departureRange(q.date),
+        departureAt: departureRange(q),
         driver: { isBlocked: false, deletedAt: null },
         ...(q.ride ? { kind: q.ride } : {}),
         AND: [
@@ -104,7 +108,7 @@ export function createMapRouteService(prisma: PrismaClient) {
     const rows = await prisma.passengerRequest.findMany({
       where: {
         status: 'open',
-        departureDate: departureRange(q.date),
+        departureDate: departureRange(q),
         passenger: { isBlocked: false, deletedAt: null },
         originCityId: { in: fromIds },
         destinationCityId: { in: toIds },
@@ -204,8 +208,14 @@ export function createMapRouteService(prisma: PrismaClient) {
       : null;
     const fallback =
       from && from.lat !== null && from.lng !== null ? { lat: from.lat, lng: from.lng } : null;
-    const items = rows
-      .map((r) => toItem(r, fallback))
+    const ordered = q.target_time
+      ? rankByTarget(rows, (r) => r.departureAt, new Date(q.target_time))
+      : rows.map((row) => ({ row, near: undefined }));
+    const items = ordered
+      .map(({ row, near }) => {
+        const item = toItem(row, fallback);
+        return item && near !== undefined ? { ...item, nearTarget: near } : item;
+      })
       .filter((i): i is MapRouteItem => i !== null);
     return { kind: q.kind, items, truncated, nearby };
   }

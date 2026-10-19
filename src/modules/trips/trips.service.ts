@@ -2,10 +2,11 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { AppError, Errors } from '@/lib/errors.js';
 import { assertActiveUser } from '@/lib/assertUser.js';
 import { toFileUrl } from '@/lib/uploads.js';
-import { cursorArgs, sliceAndNext } from '@/lib/pagination.js';
+import { cursorArgs, cursorMode, searchMode, sliceAndNext } from '@/lib/pagination.js';
 import {
   haversineKm,
   loadPlaces,
+  loadRideEnds,
   nearbyPlaceIds,
   nearestAreaId,
   placeSelect,
@@ -17,6 +18,7 @@ import {
 import { redactContactInfo } from '@/lib/contentFilter.js';
 import { estimateDurationMin } from '@/lib/routes.js';
 import { bishkekDayRange } from '@/lib/dates.js';
+import { TARGET_POOL, rankByTarget } from '@/lib/airport.js';
 import { logger } from '@/lib/logger.js';
 import type { Notifier } from '@/lib/notifier.js';
 import { createEngagementService } from '@/lib/engagement.js';
@@ -132,6 +134,8 @@ export interface TripCardItem {
   liked: boolean;
   // Only with sort=nearest: km from the viewer to the boarding point.
   distanceKm?: number;
+  // Only with target_time: departure within ±2h of the target.
+  nearTarget?: boolean;
 }
 
 // Owner list (GET /trips/my): + the driver's own comment.
@@ -277,14 +281,8 @@ export function createTripsService(
     const endpoints = new Set([body.originCityId, body.destinationCityId]);
     const pickupIds = [...new Set(body.pickupCityIds)].filter((id) => !endpoints.has(id));
     const dropoffIds = [...new Set(body.dropoffCityIds)].filter((id) => !endpoints.has(id));
-    const places = await loadPlaces(prisma, [
-      body.originCityId,
-      body.destinationCityId,
-      ...pickupIds,
-      ...dropoffIds,
-    ]);
-    const origin = places.get(body.originCityId)!;
-    const destination = places.get(body.destinationCityId)!;
+    const { origin, destination } = await loadRideEnds(prisma, body.originCityId, body.destinationCityId);
+    if (pickupIds.length + dropoffIds.length > 0) await loadPlaces(prisma, [...pickupIds, ...dropoffIds]);
     assertPointNear(body.originPoint, origin, 'originPoint');
     assertPointNear(body.destinationPoint, destination, 'destinationPoint');
     const estimatedDurationMin = estimateDurationMin(origin, destination);
@@ -414,16 +412,16 @@ export function createTripsService(
     if (fromId !== null && fromId === toId) {
       throw Errors.validation({ reason: 'cities_must_differ' });
     }
-    // Offset cursors belong to sort=nearest, id cursors to every other sort.
-    if (query.cursor && query.cursor.startsWith('o_') !== (query.sort === 'nearest')) {
-      throw Errors.validation({ reason: 'cursor_sort_mismatch' });
-    }
     // "nb_" cursor prefix = the first page fell back to the nearby (radius)
     // tier; later pages keep that expanded filter (the cursor is opaque).
     let nearby = false;
     if (query.cursor?.startsWith('nb_')) {
       nearby = true;
       query = { ...query, cursor: query.cursor.slice(3) };
+    }
+    // Offset cursors: 'o_' = sort=nearest, 't_' = target_time; id cursors otherwise.
+    if (query.cursor && cursorMode(query.cursor) !== searchMode(query)) {
+      throw Errors.validation({ reason: 'cursor_sort_mismatch' });
     }
 
     const where: Prisma.TripWhereInput = {
@@ -480,6 +478,12 @@ export function createTripsService(
       const now = new Date();
       where.departureAt = { gte: start > now ? start : now, lt: end };
     }
+    const target = query.target_time ? new Date(query.target_time) : null;
+    if (target) {
+      const { start, end } = bishkekDayRange(target);
+      const now = new Date();
+      where.departureAt = { gte: start > now ? start : now, lt: end };
+    }
     if (query.min_price !== undefined) {
       where.pricePerSeat = { gte: query.min_price };
     }
@@ -502,6 +506,37 @@ export function createTripsService(
 
     const likedFor = async (rows: TripRow[]) =>
       engagement.likedIds('trip', rows.map((r) => r.id), viewerId);
+
+    // target_time (airport searches): rank the target's day by closeness to
+    // the flight / pickup time; offset cursor "t_<n>" ("nb_t_<n>" when nearby).
+    if (target) {
+      const load = () =>
+        prisma.trip.findMany({
+          where,
+          orderBy: [{ departureAt: 'asc' }, { id: 'asc' }],
+          take: TARGET_POOL,
+          include: tripInclude,
+        });
+      let pool = await load();
+      if (pool.length === 0 && !nearby && !query.cursor && (fromId !== null || toId !== null)) {
+        const [fromIds, toIds] = await expandPlaces();
+        if (fromIds.length > 1 || toIds.length > 1) {
+          nearby = true;
+          applyCityFilters(fromIds, toIds);
+          pool = await load();
+        }
+      }
+      const ranked = rankByTarget(pool, (r) => r.departureAt, target);
+      const offset = query.cursor ? Number(query.cursor.slice(2)) : 0;
+      const slice = ranked.slice(offset, offset + query.limit);
+      const liked = await likedFor(slice.map((x) => x.row));
+      return {
+        data: slice.map((x) => ({ ...toCardItem(x.row, { liked: liked.has(x.row.id) }), nearTarget: x.near })),
+        nextCursor:
+          offset + query.limit < ranked.length ? `${nearby ? 'nb_' : ''}t_${offset + query.limit}` : null,
+        ...(nearby ? { nearby: true } : {}),
+      };
+    }
 
     // sort=nearest: rank a bounded pool by distance from the viewer to the
     // boarding point (exact pin, else the settlement); offset cursor "o_<n>".

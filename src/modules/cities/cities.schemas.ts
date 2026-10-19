@@ -54,6 +54,8 @@ export const MapRouteQuery = z
     to_id: PlaceId,
     ride: z.enum(['intercity', 'airport']).optional(),
     date: z.string().datetime({ offset: true }).optional(),
+    // Airport searches: that Bishkek day, ordered by |departure − target_time|.
+    target_time: z.string().datetime({ offset: true }).optional(),
   })
   .refine((v) => v.from_id !== v.to_id, { message: 'from_id and to_id must differ', path: ['to_id'] });
 export type MapRouteQueryInput = z.infer<typeof MapRouteQuery>;

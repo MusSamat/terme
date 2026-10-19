@@ -39,3 +39,13 @@ export function sliceAndNext<T extends { id: string }>(
     nextCursor: hasMore ? (data[data.length - 1]?.id ?? null) : null,
   };
 }
+
+// Search lists page three ways: id cursors (time / price / rating sorts),
+// 'o_<offset>' (sort=nearest) and 't_<offset>' (target_time ranking).
+type SearchMode = 'id' | 'o_' | 't_';
+export function searchMode(q: { target_time?: string; sort?: string }): SearchMode {
+  return q.target_time ? 't_' : q.sort === 'nearest' ? 'o_' : 'id';
+}
+export function cursorMode(cursor: string): SearchMode {
+  return cursor.startsWith('o_') ? 'o_' : cursor.startsWith('t_') ? 't_' : 'id';
+}

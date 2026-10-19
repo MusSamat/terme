@@ -8,6 +8,10 @@ const FlightNumber = z
   .toUpperCase()
   .regex(/^[A-Z0-9]{2}\s?\d{1,4}[A-Z]?$/, 'flight number like SU 1882');
 
+// Airport requests only (ignored on intercity ones): meet at arrivals with a
+// name sign; luggage pieces.
+const LuggageCount = z.number().int().min(0).max(5);
+
 export const CreatePassengerRequestBody = z
   .object({
     originCityId: PlaceId,
@@ -18,6 +22,8 @@ export const CreatePassengerRequestBody = z
     destinationPoint: MeetingPoint.optional(),
     // Airport transfers: the flight the passenger arrives / departs on.
     flightNumber: FlightNumber.optional(),
+    meetWithSign: z.boolean().optional(),
+    luggageCount: LuggageCount.optional(),
     seatsNeeded: z.coerce.number().int().min(1).max(8),
     departureDate: z.string().datetime({ offset: true }),
     flexible: z.boolean().default(false),
@@ -40,6 +46,8 @@ export const UpdatePassengerRequestBody = z
     originPoint: MeetingPoint.nullable().optional(),
     destinationPoint: MeetingPoint.nullable().optional(),
     flightNumber: FlightNumber.nullable().optional(),
+    meetWithSign: z.boolean().optional(),
+    luggageCount: LuggageCount.nullable().optional(),
   })
   .strict();
 
@@ -48,15 +56,18 @@ export type UpdatePassengerRequestInput = z.infer<typeof UpdatePassengerRequestB
 export const ListRequestsQuery = z.object({
   ...PlaceFilterQuery,
   date: z.string().datetime({ offset: true }).optional(),
+  // Airport searches: the flight / pickup instant. Results of that Asia/Bishkek
+  // day ordered by |departure − target_time| (overrides `sort` and `date`).
+  target_time: z.string().datetime({ offset: true }).optional(),
   seats: z.coerce.number().int().min(1).max(8).optional(),
   kind: z.enum(['intercity', 'airport']).optional(),
   // nearest = by distance from (near_lat, near_lng) to where the passenger waits.
   sort: z.enum(['time', 'nearest']).default('time'),
   // Plain uuid, 'nb_'-prefixed uuid when paginating the nearby (radius) tier,
-  // or 'o_<offset>' for sort=nearest.
+  // 'o_<offset>' for sort=nearest, '[nb_]t_<offset>' with target_time.
   cursor: z
     .string()
-    .regex(/^((nb_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|o_\d{1,4})$/i)
+    .regex(/^((nb_)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|t_\d{1,4})|o_\d{1,4})$/i)
     .optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });

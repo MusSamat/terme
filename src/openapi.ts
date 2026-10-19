@@ -49,6 +49,7 @@ export const openapiDocument = {
     { name: 'Cities' },
     { name: 'Drivers' },
     { name: 'Trips' },
+    { name: 'PassengerRequests' },
     { name: 'Bookings' },
     { name: 'Chat' },
     { name: 'Ratings' },
@@ -202,7 +203,11 @@ export const openapiDocument = {
         required: ['id', 'type', 'nameRu', 'nameKg'],
         properties: {
           id: { type: 'integer' },
-          type: { type: 'string', enum: ['capital', 'city', 'town', 'village', 'airport'] },
+          type: {
+            type: 'string',
+            enum: ['capital', 'city', 'town', 'village', 'airport', 'raion', 'aiyl_aimak', 'city_district'],
+            description: 'raion / aiyl_aimak / city_district only via scope=any (the non-airport end of a transfer)',
+          },
           nameRu: { type: 'string' },
           nameKg: { type: 'string' },
           lat: { type: 'number', nullable: true },
@@ -309,7 +314,68 @@ export const openapiDocument = {
           status: { type: 'string', enum: ['active', 'direct', 'completed', 'cancelled'] },
           liked: { type: 'boolean', description: 'Whether the requesting viewer liked this listing' },
           distanceKm: { type: 'number', description: 'Only with sort=nearest' },
+          nearTarget: { type: 'boolean', description: 'Only with target_time: departure within ±2h of it' },
         },
+      },
+      // Passenger request card (GET /passenger-requests) and detail.
+      PassengerRequestCardItem: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          passengerId: { type: 'string', format: 'uuid' },
+          kind: { type: 'string', enum: ['intercity', 'airport'] },
+          flightNumber: { type: 'string', nullable: true },
+          meetWithSign: { type: 'boolean', description: 'Airport requests: meet at arrivals with a name sign (false on intercity)' },
+          luggageCount: { type: 'integer', minimum: 0, maximum: 5, nullable: true, description: 'Airport requests: luggage pieces; null = not said' },
+          originCityId: { type: 'integer' },
+          destinationCityId: { type: 'integer' },
+          originCity: { type: 'string' },
+          destinationCity: { type: 'string' },
+          origin: { $ref: '#/components/schemas/Place' },
+          destination: { $ref: '#/components/schemas/Place' },
+          originPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
+          lat: { type: 'number', nullable: true },
+          lng: { type: 'number', nullable: true },
+          seatsNeeded: { type: 'integer' },
+          departureDate: { type: 'string', format: 'date-time' },
+          flexible: { type: 'boolean' },
+          status: { type: 'string' },
+          liked: { type: 'boolean' },
+          myResponse: {
+            type: 'object',
+            nullable: true,
+            properties: { id: { type: 'string' }, status: { type: 'string' } },
+          },
+          passenger: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              name: { type: 'string' },
+              avatarUrl: { type: 'string', nullable: true },
+              rating: { type: 'number', nullable: true },
+              ratingCount: { type: 'integer' },
+            },
+          },
+          distanceKm: { type: 'number', description: 'Only with sort=nearest' },
+          nearTarget: { type: 'boolean', description: 'Only with target_time: departure within ±2h of it' },
+        },
+      },
+      PassengerRequest: {
+        allOf: [
+          { $ref: '#/components/schemas/PassengerRequestCardItem' },
+          {
+            type: 'object',
+            properties: {
+              destinationPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
+              comment: { type: 'string', nullable: true },
+              createdAt: { type: 'string', format: 'date-time' },
+              metrics: {
+                type: 'object',
+                properties: { views: { type: 'integer' }, likes: { type: 'integer' }, contacts: { type: 'integer' } },
+              },
+            },
+          },
+        ],
       },
       TripListItem: {
         type: 'object',
@@ -1091,6 +1157,12 @@ export const openapiDocument = {
         parameters: [
           { name: 'q', in: 'query', schema: { type: 'string', maxLength: 100 } },
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 20 } },
+          {
+            name: 'scope',
+            in: 'query',
+            schema: { type: 'string', enum: ['settlements', 'any'], default: 'settlements' },
+            description: 'any = also районы, айыл аймактары and Бишкек city districts (the non-airport end of a transfer)',
+          },
         ],
         responses: {
           '200': {
@@ -1107,7 +1179,7 @@ export const openapiDocument = {
     '/cities/airports': {
       get: {
         tags: ['Cities'],
-        summary: 'Airports with the city each one serves (airport transfers)',
+        summary: 'Active transfer airports: served city, title, flight-type defaults, popular other ends',
         security: [],
         responses: {
           '200': {
@@ -1126,6 +1198,26 @@ export const openapiDocument = {
                             type: 'object',
                             properties: {
                               serves: { allOf: [{ $ref: '#/components/schemas/Place' }], nullable: true },
+                              titleRu: { type: 'string', example: 'Манас · Бишкек' },
+                              titleKg: { type: 'string', example: 'Манас · Бишкек' },
+                              flightType: {
+                                type: 'string',
+                                enum: ['international', 'domestic'],
+                                description: 'Default of the international / domestic toggle',
+                              },
+                              departureBufferMin: {
+                                type: 'object',
+                                description: 'Minutes to be at the airport before departure',
+                                properties: {
+                                  international: { type: 'integer', example: 150 },
+                                  domestic: { type: 'integer', example: 90 },
+                                },
+                              },
+                              popularDestinations: {
+                                type: 'array',
+                                description: 'Quick chips for the other end, served city first',
+                                items: { $ref: '#/components/schemas/Place' },
+                              },
                             },
                           },
                         ],
@@ -1136,6 +1228,49 @@ export const openapiDocument = {
               },
             },
           },
+        },
+      },
+    },
+    '/cities/airports/{id}/pickup-suggestion': {
+      get: {
+        tags: ['Cities'],
+        summary: 'When to leave for a flight: departure − check-in buffer − travel time',
+        description:
+          'pickupAt = flight_time − bufferMin (international 150 / domestic 90) − travelMin, where travelMin = '
+          + 'straight-line km from from_id to the airport at 50 km/h, rounded up to 15 min (min 15). '
+          + 'flight_type defaults to the airport\'s flightType. 404 for an unknown / inactive airport.',
+        security: [],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'integer' }, description: 'Airport place id' },
+          { name: 'from_id', in: 'query', required: true, schema: { type: 'integer' } },
+          { name: 'flight_time', in: 'query', required: true, schema: { type: 'string', format: 'date-time' }, description: 'Flight departure' },
+          { name: 'flight_type', in: 'query', schema: { type: 'string', enum: ['international', 'domestic'] } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    data: {
+                      type: 'object',
+                      required: ['pickupAt', 'travelMin', 'bufferMin', 'distanceKm', 'flightType'],
+                      properties: {
+                        pickupAt: { type: 'string', format: 'date-time' },
+                        travelMin: { type: 'integer' },
+                        bufferMin: { type: 'integer' },
+                        distanceKm: { type: 'number' },
+                        flightType: { type: 'string', enum: ['international', 'domestic'] },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          ...errorResponses,
         },
       },
     },
@@ -1167,7 +1302,7 @@ export const openapiDocument = {
     '/cities/{id}/spots': {
       get: {
         tags: ['Cities'],
-        summary: 'Pin picker inside Бишкек / Ош: departure spots, then жилмассивы (draggable)',
+        summary: 'Pin picker inside Бишкек / Ош (spots, then жилмассивы) and airports (meeting spots)',
         security: [],
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'integer' } },
@@ -1191,6 +1326,7 @@ export const openapiDocument = {
                           nameKg: { type: 'string' },
                           lat: { type: 'number' },
                           lng: { type: 'number' },
+                          approx: { type: 'boolean', description: 'Approximate point (airport terminals)' },
                         },
                       },
                     },
@@ -1279,6 +1415,12 @@ export const openapiDocument = {
           { name: 'to_id', in: 'query', required: true, schema: { type: 'integer' }, description: 'Must differ from from_id' },
           { name: 'date', in: 'query', schema: { type: 'string', format: 'date-time' }, description: 'Asia/Bishkek calendar day' },
           { name: 'ride', in: 'query', schema: { type: 'string', enum: ['intercity', 'airport'] } },
+          {
+            name: 'target_time',
+            in: 'query',
+            schema: { type: 'string', format: 'date-time' },
+            description: 'Airport searches: that Bishkek day, items ordered by |departure − target_time| (overrides date)',
+          },
         ],
         responses: {
           '200': {
@@ -1307,6 +1449,7 @@ export const openapiDocument = {
                           seatsFree: { type: 'integer', nullable: true, description: 'Trips only' },
                           passengers: { type: 'integer', nullable: true, description: 'Requests only' },
                           price: { type: 'integer', nullable: true, description: 'Per seat; null for requests' },
+                          nearTarget: { type: 'boolean', description: 'Only with target_time: within ±2h of it' },
                           origin: { type: 'object', properties: { id: { type: 'integer' }, nameRu: { type: 'string' }, nameKg: { type: 'string' } } },
                           destination: { type: 'object', properties: { id: { type: 'integer' }, nameRu: { type: 'string' }, nameKg: { type: 'string' } } },
                           user: {
@@ -1425,7 +1568,16 @@ export const openapiDocument = {
           { name: 'no_smoking', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
           { name: 'pets', in: 'query', schema: { type: 'string', enum: ['true', 'false'] } },
           { name: 'sort', in: 'query', schema: { type: 'string', enum: ['time', 'price_asc', 'rating_desc', 'nearest'] } },
-          { name: 'cursor', in: 'query', schema: { type: 'string' }, description: 'Opaque' },
+          {
+            name: 'target_time',
+            in: 'query',
+            schema: { type: 'string', format: 'date-time' },
+            description:
+              'Airport searches (flight / pickup instant): trips of that Asia/Bishkek day ordered by '
+              + '|departure − target_time| (within ±2h first, nearTarget=true), then the rest of the day. '
+              + 'Overrides sort and date. Pages with an offset cursor "t_<n>" ("nb_t_<n>" on the nearby tier).',
+          },
+          { name: 'cursor', in: 'query', schema: { type: 'string' }, description: 'Opaque; pass back as received' },
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } },
         ],
         responses: {
@@ -1592,6 +1744,100 @@ export const openapiDocument = {
     },
 
     // ─── Bookings ───────────────────────────────────────────────────
+    // ─── Passenger requests ─────────────────────────────────────────
+    '/passenger-requests': {
+      get: {
+        tags: ['PassengerRequests'],
+        summary: 'Open passenger requests (drivers browse)',
+        security: [],
+        parameters: [
+          { name: 'from_id', in: 'query', schema: { type: 'integer' } },
+          { name: 'to_id', in: 'query', schema: { type: 'integer' } },
+          { name: 'from_city', in: 'query', schema: { type: 'string' } },
+          { name: 'to_city', in: 'query', schema: { type: 'string' } },
+          { name: 'near_lat', in: 'query', schema: { type: 'number' } },
+          { name: 'near_lng', in: 'query', schema: { type: 'number' } },
+          { name: 'date', in: 'query', schema: { type: 'string', format: 'date-time' } },
+          { name: 'seats', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 8 } },
+          { name: 'kind', in: 'query', schema: { type: 'string', enum: ['intercity', 'airport'] } },
+          { name: 'sort', in: 'query', schema: { type: 'string', enum: ['time', 'nearest'] } },
+          {
+            name: 'target_time',
+            in: 'query',
+            schema: { type: 'string', format: 'date-time' },
+            description: 'Same as GET /trips: that day ordered by |departure − target_time|, cursor "t_<n>"',
+          },
+          { name: 'cursor', in: 'query', schema: { type: 'string' }, description: 'Opaque; pass back as received' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK (nearby=true when the nearby-settlements tier was used)',
+            content: { 'application/json': { schema: cursorPaginated('PassengerRequestCardItem') } },
+          },
+          ...errorResponses,
+        },
+      },
+      post: {
+        tags: ['PassengerRequests'],
+        summary: 'Post a passenger request («Нужна поездка»)',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['originCityId', 'destinationCityId', 'seatsNeeded', 'departureDate'],
+                properties: {
+                  originCityId: { type: 'integer' },
+                  destinationCityId: { type: 'integer' },
+                  originPoint: { $ref: '#/components/schemas/MeetingPoint' },
+                  destinationPoint: { $ref: '#/components/schemas/MeetingPoint' },
+                  flightNumber: { type: 'string', example: 'SU 1882' },
+                  meetWithSign: { type: 'boolean', description: 'Airport requests only (ignored otherwise)' },
+                  luggageCount: { type: 'integer', minimum: 0, maximum: 5, description: 'Airport requests only (ignored otherwise)' },
+                  seatsNeeded: { type: 'integer', minimum: 1, maximum: 8 },
+                  departureDate: { type: 'string', format: 'date-time' },
+                  flexible: { type: 'boolean' },
+                  comment: { type: 'string', maxLength: 500 },
+                },
+              },
+            },
+          },
+        },
+        responses: { '201': { description: 'Created', content: jsonOk('PassengerRequest') }, ...errorResponses },
+      },
+    },
+    '/passenger-requests/{id}': {
+      patch: {
+        tags: ['PassengerRequests'],
+        summary: 'Edit own open request',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  seatsNeeded: { type: 'integer', minimum: 1, maximum: 8 },
+                  departureDate: { type: 'string', format: 'date-time' },
+                  flexible: { type: 'boolean' },
+                  comment: { type: 'string', nullable: true, maxLength: 500 },
+                  originPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
+                  destinationPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
+                  flightNumber: { type: 'string', nullable: true },
+                  meetWithSign: { type: 'boolean', description: 'Airport requests only (ignored otherwise)' },
+                  luggageCount: { type: 'integer', minimum: 0, maximum: 5, nullable: true, description: 'Airport requests only' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'OK', content: jsonOk('PassengerRequest') }, ...errorResponses },
+      },
+    },
     '/bookings': {
       post: {
         tags: ['Bookings'],

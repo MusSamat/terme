@@ -636,6 +636,10 @@ model PassengerRequest {
   kind            String    @default("intercity") @db.VarChar(10) // intercity | airport
   // Arriving / departing flight («SU 1882») so the driver can meet the passenger.
   flightNumber    String?   @map("flight_number") @db.VarChar(10)
+  // Airport requests only: meet at arrivals with a name sign; luggage pieces
+  // 0–5 (CHECK in migration 20261019140000), NULL = not said.
+  meetWithSign    Boolean   @default(false) @map("meet_with_sign")
+  luggageCount    Int?      @map("luggage_count") @db.SmallInt
   originCityId    Int       @map("origin_city_id")
   destinationCityId Int     @map("destination_city_id")
   // Display snapshot of the place name (name_ru) — the ids are the truth.

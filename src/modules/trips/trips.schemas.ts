@@ -82,6 +82,9 @@ export const TripCalendarQuery = z.object({
 export const TripSearchQuery = z.object({
   ...PlaceFilterQuery,
   date: z.string().datetime({ offset: true }).optional(),
+  // Airport searches: the flight / pickup instant. Results of that Asia/Bishkek
+  // day ordered by |departure − target_time| (overrides `sort` and `date`).
+  target_time: z.string().datetime({ offset: true }).optional(),
   seats: z.coerce.number().int().min(1).max(4).default(1),
   min_price: z.coerce.number().int().min(0).optional(),
   max_price: z.coerce.number().int().min(0).optional(),
@@ -108,10 +111,10 @@ export const TripSearchQuery = z.object({
   // nearest = by distance from (near_lat, near_lng) to the boarding point.
   sort: z.enum(['time', 'price_asc', 'rating_desc', 'nearest']).default('time'),
   // Plain uuid, 'nb_'-prefixed uuid when paginating the nearby (radius) tier,
-  // or 'o_<offset>' for sort=nearest.
+  // 'o_<offset>' for sort=nearest, '[nb_]t_<offset>' with target_time.
   cursor: z
     .string()
-    .regex(/^((nb_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|o_\d{1,4})$/i)
+    .regex(/^((nb_)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|t_\d{1,4})|o_\d{1,4})$/i)
     .optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });

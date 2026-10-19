@@ -1,6 +1,9 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { Errors } from '@/lib/errors.js';
 import { foldCyrillic, latinToCyrillic, layoutToCyrillic } from '@/lib/translit.js';
+import { DEPARTURE_BUFFER_MIN, suggestPickup, type FlightType } from '@/lib/airport.js';
 import {
+  AIRPORT_END_TYPES,
   haversineKm,
   placeSelect,
   resolvePlaceByName,
@@ -34,6 +37,8 @@ export interface MeetingSpot {
   nameKg: string;
   lat: number;
   lng: number;
+  // Approximate point (airport terminals) — to be refined by an admin.
+  approx?: boolean;
 }
 
 const SPOTS: Record<string, MeetingSpot[]> = {
@@ -50,6 +55,76 @@ const SPOTS: Record<string, MeetingSpot[]> = {
     { nameRu: 'Ошский базар (Жайма)', nameKg: 'Ош базары (Жайма)', lat: 40.5303, lng: 72.7976 },
   ],
 };
+
+// Where transfer drivers meet passengers, keyed by the airport's soate_code.
+// Approximate points at the terminals (approx: true).
+const AIRPORT_SPOTS: Record<string, MeetingSpot[]> = {
+  'airport:FRU': [
+    {
+      nameRu: 'Выход из зоны прилёта (международный терминал)',
+      nameKg: 'Келүү аймагынан чыгуу (эл аралык терминал)',
+      lat: 43.0607,
+      lng: 74.4787,
+      approx: true,
+    },
+    { nameRu: 'Внутренний терминал', nameKg: 'Ички терминал', lat: 43.0603, lng: 74.4752, approx: true },
+    { nameRu: 'Парковка P1', nameKg: 'P1 унаа токтотуучу жайы', lat: 43.0594, lng: 74.4779, approx: true },
+  ],
+  'airport:OSS': [
+    { nameRu: 'Выход из зоны прилёта', nameKg: 'Келүү аймагынан чыгуу', lat: 40.6086, lng: 72.7938, approx: true },
+    {
+      nameRu: 'Парковка у терминала',
+      nameKg: 'Терминалдын жанындагы унаа токтотуучу жай',
+      lat: 40.6079,
+      lng: 72.7929,
+      approx: true,
+    },
+  ],
+};
+
+// Transfer airports: display title, default flight type, popular other ends
+// (by soate_code — the directory spells Жалал-Абад «Манас», 41703410000010).
+// Airports not listed here (re-enabled by an admin) fall back to their name,
+// domestic flights and the served city.
+const AIRPORT_META: Record<
+  string,
+  { titleRu: string; titleKg: string; flightType: FlightType; popular: string[] }
+> = {
+  'airport:FRU': {
+    titleRu: 'Манас · Бишкек',
+    titleKg: 'Манас · Бишкек',
+    flightType: 'international',
+    // Бишкек, Кант, Токмок, Кара-Балта, Чолпон-Ата, Балыкчы
+    popular: ['41711000000000', '41708410000010', '41708400000010', '41708420000010', '41702215600010', '41702420000010'],
+  },
+  'airport:OSS': {
+    titleRu: 'Ош',
+    titleKg: 'Ош',
+    flightType: 'domestic',
+    // Ош, Жалал-Абад, Өзгөн, Кара-Суу, Ноокат
+    popular: ['41721000000000', '41703410000010', '41706255600010', '41706226600010', '41706242600010'],
+  },
+};
+
+export interface AirportDto extends PlaceRef {
+  serves: PlaceRef | null;
+  titleRu: string;
+  titleKg: string;
+  // Default of the «международный / внутренний» toggle.
+  flightType: FlightType;
+  // Minutes to be at the airport before departure, per flight type.
+  departureBufferMin: Record<FlightType, number>;
+  // Quick chips for the other end; the served city first.
+  popularDestinations: PlaceRef[];
+}
+
+export interface PickupSuggestionDto {
+  pickupAt: string;
+  travelMin: number;
+  bufferMin: number;
+  distanceKm: number;
+  flightType: FlightType;
+}
 
 export interface PopularRoute {
   from: string;
@@ -83,7 +158,9 @@ export function createCitiesService(prisma: PrismaClient) {
    * letters — every variant is folded (kg_fold) and matched on the
    * trigram-indexed *_folded columns. Prefix hits rank first, then prominence.
    */
-  async function search(q: string, limit: number): Promise<PlaceRef[]> {
+  // scope=any also finds administrative areas (район, айыл аймак, city
+  // districts) — the non-airport end of a transfer may be any of them.
+  async function search(q: string, limit: number, scope: 'settlements' | 'any' = 'settlements'): Promise<PlaceRef[]> {
     const candidates = new Set<string>([foldCyrillic(q)]);
     if (/[a-z<>,.;:'"[\]{}`~]/i.test(q)) {
       candidates.add(foldCyrillic(latinToCyrillic(q)));
@@ -104,7 +181,8 @@ export function createCitiesService(prisma: PrismaClient) {
     );
     const rows = await prisma.$queryRaw<Array<{ id: number }>>`
       SELECT id FROM cities
-      WHERE is_active AND is_searchable AND (${match})
+      WHERE is_active AND (${match})
+        AND (is_searchable OR (${scope === 'any'} AND type IN (${Prisma.join(AIRPORT_END_TYPES)})))
       ORDER BY (${prefix}) DESC, priority DESC, name_ru ASC
       LIMIT ${limit}
     `;
@@ -198,8 +276,11 @@ export function createCitiesService(prisma: PrismaClient) {
   // Pin picker inside Бишкек / Ош: well-known departure spots first, then
   // жилмассивы; `q` filters both (RU / KG folded).
   async function spots(id: number, q?: string): Promise<MeetingSpot[]> {
-    const city = await prisma.city.findUnique({ where: { id }, select: { nameRu: true, type: true } });
-    if (city?.type !== 'capital') return [];
+    const city = await prisma.city.findUnique({
+      where: { id },
+      select: { nameRu: true, type: true, soateCode: true },
+    });
+    if (city?.type !== 'capital' && city?.type !== 'airport') return [];
     const folded = q ? foldCyrillic(q.trim()) : '';
     const hit = (s: { nameRu: string; nameKg: string }) =>
       !folded || foldCyrillic(s.nameRu).includes(folded) || foldCyrillic(s.nameKg).includes(folded);
@@ -208,25 +289,37 @@ export function createCitiesService(prisma: PrismaClient) {
       orderBy: { nameRu: 'asc' },
       select: { nameRu: true, nameKg: true, lat: true, lng: true },
     });
+    const known = city.type === 'airport' ? (AIRPORT_SPOTS[city.soateCode] ?? []) : (SPOTS[city.nameRu] ?? []);
     return [
-      ...(SPOTS[city.nameRu] ?? []).filter(hit).map((s) => ({ kind: 'spot' as const, ...s })),
+      ...known.filter(hit).map((s) => ({ kind: 'spot' as const, ...s })),
       ...areas.filter(hit).map((a) => ({ kind: 'area' as const, ...a })),
     ];
   }
 
-  // Airports with the city each one serves (nearest capital / city) — the
-  // «Аэропорт» entry point pairs them: Бишкек ↔ «Манас», Ош ↔ Ош.
-  async function airports(): Promise<Array<PlaceRef & { serves: PlaceRef | null }>> {
+  // Active transfer airports with the city each one serves (nearest capital /
+  // city) — the «Аэропорт» entry point pairs them: «Манас» ↔ Бишкек, Ош ↔ Ош.
+  // Inactive airports (admin-disabled) are left out; their old rides still read.
+  async function airports(): Promise<AirportDto[]> {
     const rows = await prisma.city.findMany({
       where: { type: 'airport', isActive: true },
       orderBy: [{ priority: 'desc' }, { id: 'asc' }],
-      select: placeSelect,
+      select: { ...placeSelect, soateCode: true },
     });
+    if (rows.length === 0) return [];
     const cities = await prisma.city.findMany({
       where: { type: { in: ['capital', 'city'] }, isActive: true, lat: { not: null } },
       select: placeSelect,
     });
-    return rows.map((a) => {
+    const codes = rows.flatMap((a) => AIRPORT_META[a.soateCode]?.popular ?? []);
+    const popular = new Map(
+      (
+        await prisma.city.findMany({
+          where: { soateCode: { in: codes }, isActive: true },
+          select: { ...placeSelect, soateCode: true },
+        })
+      ).map(({ soateCode, ...p }) => [soateCode, toPlaceRef(p)]),
+    );
+    return rows.map(({ soateCode, ...a }) => {
       let serves: PlaceRow | null = null;
       let best = Number.POSITIVE_INFINITY;
       for (const c of cities) {
@@ -239,9 +332,51 @@ export function createCitiesService(prisma: PrismaClient) {
           serves = c;
         }
       }
-      return { ...toPlaceRef(a), serves: serves ? toPlaceRef(serves) : null };
+      const servesRef = serves ? toPlaceRef(serves) : null;
+      const meta = AIRPORT_META[soateCode];
+      const chips = (meta?.popular ?? []).flatMap((code) => (popular.has(code) ? [popular.get(code)!] : []));
+      if (servesRef && !chips.some((p) => p.id === servesRef.id)) chips.unshift(servesRef);
+      return {
+        ...toPlaceRef(a),
+        serves: servesRef,
+        titleRu: meta?.titleRu ?? a.nameRu,
+        titleKg: meta?.titleKg ?? a.nameKg,
+        flightType: meta?.flightType ?? 'domestic',
+        departureBufferMin: { ...DEPARTURE_BUFFER_MIN },
+        popularDestinations: chips,
+      };
     });
   }
 
-  return { search, top, nearest, byIds, popularRoutes, spots, airports };
+  // «Во сколько выезжать»: flight departure − check-in buffer − travel time
+  // from the other end (straight line at 50 km/h, rounded up to 15 min).
+  async function pickupSuggestion(
+    airportId: number,
+    fromId: number,
+    flightTime: Date,
+    flightType?: FlightType,
+  ): Promise<PickupSuggestionDto> {
+    const airport = await prisma.city.findFirst({
+      where: { id: airportId, type: 'airport', isActive: true },
+      select: { lat: true, lng: true, soateCode: true },
+    });
+    if (!airport) throw Errors.notFound('Airport');
+    const from = await prisma.city.findFirst({
+      where: { id: fromId, isActive: true },
+      select: { lat: true, lng: true },
+    });
+    if (!from) throw Errors.validation({ reason: 'unknown_city', ids: [fromId] });
+    if (airport.lat === null || airport.lng === null || from.lat === null || from.lng === null) {
+      throw Errors.validation({ reason: 'no_coordinates' });
+    }
+    const s = suggestPickup(
+      { lat: from.lat, lng: from.lng },
+      { lat: airport.lat, lng: airport.lng },
+      flightTime,
+      flightType ?? AIRPORT_META[airport.soateCode]?.flightType ?? 'domestic',
+    );
+    return { ...s, pickupAt: s.pickupAt.toISOString() };
+  }
+
+  return { search, top, nearest, byIds, popularRoutes, spots, airports, pickupSuggestion };
 }

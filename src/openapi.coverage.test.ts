@@ -92,7 +92,7 @@ function specRoutes(): Set<string> {
   return out;
 }
 
-// ─── Frozen known-gaps allowlist (61 routes) ─────────────────────────────────
+// ─── Frozen known-gaps allowlist (58 routes) ─────────────────────────────────
 // Routes mounted today but intentionally NOT yet in openapi.ts. Shrink this as
 // the spec is backfilled; never grow it silently — a new entry means a new
 // endpoint shipped without docs.
@@ -121,7 +121,6 @@ const KNOWN_GAPS: readonly string[] = [
   'GET /cities/popular-routes',
   'GET /loyalty/status',
   'GET /loyalty/transactions',
-  'GET /passenger-requests',
   'GET /passenger-requests/calendar',
   'GET /passenger-requests/my',
   'GET /passenger-requests/{id}',
@@ -137,7 +136,6 @@ const KNOWN_GAPS: readonly string[] = [
   'PATCH /chats/{booking_id}/read-all',
   'PATCH /drivers/car-photo',
   'PATCH /notifications/read-all',
-  'PATCH /passenger-requests/{id}',
   'PATCH /trips/{id}/complete',
   'POST /admin/car-brands',
   'POST /admin/car-colors',
@@ -146,7 +144,6 @@ const KNOWN_GAPS: readonly string[] = [
   'POST /auth/admin/change-password',
   'POST /auth/admin/refresh',
   'POST /cars',
-  'POST /passenger-requests',
   'POST /passenger-requests/{id}/contact',
   'POST /passenger-requests/{id}/like',
   'POST /passenger-requests/{id}/respond',

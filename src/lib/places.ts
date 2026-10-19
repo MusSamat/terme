@@ -43,18 +43,22 @@ export function toPlaceRef(c: PlaceRow): PlaceRef {
 
 // Places a ride can start / end at.
 const SETTLEMENT_TYPES = ['capital', 'city', 'town', 'village', 'airport'];
+// The non-airport end of a transfer may also be any administrative area
+// (район, айыл аймак, city district of Бишкек) — GET /cities?scope=any.
+export const AIRPORT_END_TYPES = ['raion', 'aiyl_aimak', 'city_district'];
 
 /**
- * Loads the given place ids (settlements only) or throws 400 unknown_city.
- * Returns them keyed by id.
+ * Loads the given place ids (settlements, plus `extraTypes`) or throws 400
+ * unknown_city. Returns them keyed by id.
  */
 export async function loadPlaces(
   prisma: PrismaClient | Prisma.TransactionClient,
   ids: number[],
+  extraTypes: string[] = [],
 ): Promise<Map<number, PlaceRow>> {
   const unique = [...new Set(ids)];
   const rows = await prisma.city.findMany({
-    where: { id: { in: unique }, isActive: true, type: { in: SETTLEMENT_TYPES } },
+    where: { id: { in: unique }, isActive: true, type: { in: [...SETTLEMENT_TYPES, ...extraTypes] } },
     select: placeSelect,
   });
   if (rows.length !== unique.length) {
@@ -62,6 +66,25 @@ export async function loadPlaces(
     throw Errors.validation({ reason: 'unknown_city', ids: unique.filter((i) => !known.has(i)) });
   }
   return new Map(rows.map((r) => [r.id, r]));
+}
+
+/**
+ * Loads a ride's two ends. An administrative area (AIRPORT_END_TYPES) is only
+ * allowed opposite an airport; otherwise 400 unknown_city like loadPlaces.
+ */
+export async function loadRideEnds(
+  prisma: PrismaClient | Prisma.TransactionClient,
+  originId: number,
+  destinationId: number,
+): Promise<{ origin: PlaceRow; destination: PlaceRow }> {
+  const places = await loadPlaces(prisma, [originId, destinationId], AIRPORT_END_TYPES);
+  const origin = places.get(originId)!;
+  const destination = places.get(destinationId)!;
+  if (origin.type !== 'airport' && destination.type !== 'airport') {
+    const bad = [origin, destination].filter((p) => AIRPORT_END_TYPES.includes(p.type)).map((p) => p.id);
+    if (bad.length > 0) throw Errors.validation({ reason: 'unknown_city', ids: bad });
+  }
+  return { origin, destination };
 }
 
 /**

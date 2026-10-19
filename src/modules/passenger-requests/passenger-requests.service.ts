@@ -4,7 +4,7 @@ import { toFileUrl } from '@/lib/uploads.js';
 import { createEngagementService } from '@/lib/engagement.js';
 import {
   haversineKm,
-  loadPlaces,
+  loadRideEnds,
   nearbyPlaceIds,
   nearestAreaId,
   placeSelect,
@@ -15,6 +15,8 @@ import {
 } from '@/lib/places.js';
 import { redactContactInfo } from '@/lib/contentFilter.js';
 import { bishkekDayRange } from '@/lib/dates.js';
+import { TARGET_POOL, rankByTarget } from '@/lib/airport.js';
+import { cursorMode, searchMode } from '@/lib/pagination.js';
 import { estimateDurationMin } from '@/lib/routes.js';
 import type { Notifier } from '@/lib/notifier.js';
 import type { CreatePassengerRequestInput, ListRequestsInput, RespondInput, UpdatePassengerRequestInput } from './passenger-requests.schemas.js';
@@ -34,6 +36,10 @@ export interface PassengerRequestCardItem {
   passengerId: string;
   kind: 'intercity' | 'airport';
   flightNumber: string | null;
+  // Airport requests: meet at arrivals with a name sign; luggage pieces (0–5,
+  // null = not said). Always false / null on intercity requests.
+  meetWithSign: boolean;
+  luggageCount: number | null;
   originCityId: number;
   destinationCityId: number;
   originCity: string;
@@ -62,6 +68,8 @@ export interface PassengerRequestCardItem {
   };
   // Only with sort=nearest: km from the viewer to where the passenger waits.
   distanceKm?: number;
+  // Only with target_time: departure within ±2h of the target.
+  nearTarget?: boolean;
 }
 
 export interface PassengerRequestDTO extends PassengerRequestCardItem {
@@ -120,6 +128,8 @@ export function toCardItem(
     passengerId: row.passengerId,
     kind: row.kind as 'intercity' | 'airport',
     flightNumber: row.flightNumber,
+    meetWithSign: row.meetWithSign,
+    luggageCount: row.luggageCount,
     originCityId: row.originCityId,
     destinationCityId: row.destinationCityId,
     originCity: row.originCity,
@@ -208,11 +218,11 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
       throw Errors.validation({ departureDate: 'too far ahead (max 60 days)' });
     }
 
-    const places = await loadPlaces(prisma, [input.originCityId, input.destinationCityId]);
-    const origin = places.get(input.originCityId)!;
-    const dest = places.get(input.destinationCityId)!;
+    const { origin, destination: dest } = await loadRideEnds(prisma, input.originCityId, input.destinationCityId);
     assertPointNear(input.originPoint, origin, 'originPoint');
     assertPointNear(input.destinationPoint, dest, 'destinationPoint');
+
+    const kind = origin.type === 'airport' || dest.type === 'airport' ? 'airport' : 'intercity';
 
     // Business rule: one open request per route per day (mirrors trips —
     // duplicates only clutter the feed).
@@ -235,8 +245,11 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
     const row = await prisma.passengerRequest.create({
       data: {
         passengerId,
-        kind: origin.type === 'airport' || dest.type === 'airport' ? 'airport' : 'intercity',
+        kind,
         flightNumber: input.flightNumber ?? null,
+        ...(kind === 'airport'
+          ? { meetWithSign: input.meetWithSign ?? false, luggageCount: input.luggageCount ?? null }
+          : {}),
         originCityId: origin.id,
         destinationCityId: dest.id,
         originCity: origin.nameRu,
@@ -278,11 +291,14 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
 
     // "nb_" cursor prefix = the first page fell back to the nearby (radius)
     // tier (see trips.service.search) — keep the expanded filter on later pages.
-    if (input.cursor && input.cursor.startsWith('o_') !== (input.sort === 'nearest')) {
-      throw Errors.validation({ reason: 'cursor_sort_mismatch' });
-    }
     let nearby = input.cursor?.startsWith('nb_') ?? false;
     const cursor = nearby ? input.cursor!.slice(3) : input.cursor;
+    if (cursor && cursorMode(cursor) !== searchMode(input)) {
+      throw Errors.validation({ reason: 'cursor_sort_mismatch' });
+    }
+    // target_time: the target's Asia/Bishkek day, ranked by closeness to it.
+    const target = input.target_time ? new Date(input.target_time) : null;
+    const day = target ?? (input.date ? new Date(input.date) : null);
 
     const whereFor = (fromIds: number[] | null, toIds: number[] | null): Prisma.PassengerRequestWhereInput => ({
       status: 'open',
@@ -292,9 +308,9 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
       ...(fromIds ? { originCityId: { in: fromIds } } : {}),
       ...(toIds ? { destinationCityId: { in: toIds } } : {}),
       // Single Asia/Bishkek day, floored at "now".
-      ...(input.date
+      ...(day
         ? (() => {
-            const { start, end } = bishkekDayRange(new Date(input.date));
+            const { start, end } = bishkekDayRange(day);
             return { departureDate: { gte: start > now ? start : now, lt: end } };
           })()
         : {}),
@@ -325,6 +341,35 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
       return (r: RequestRow) =>
         toCardItem(r, { liked: likedSet.has(r.id), myResponse: respByRequest.get(r.id) ?? null });
     };
+
+    // target_time: offset cursor "t_<n>" ("nb_t_<n>" on the nearby tier).
+    if (target) {
+      const load = (fromIds: number[] | null, toIds: number[] | null) =>
+        prisma.passengerRequest.findMany({
+          where: whereFor(fromIds, toIds),
+          orderBy: [{ departureDate: 'asc' }, { id: 'asc' }],
+          take: TARGET_POOL,
+          include: requestInclude,
+        });
+      let pool = await load(...(nearby ? await expandPlaces() : exact));
+      if (pool.length === 0 && !nearby && !cursor && (fromId !== null || toId !== null)) {
+        const [fromIds, toIds] = await expandPlaces();
+        if ((fromIds?.length ?? 0) > 1 || (toIds?.length ?? 0) > 1) {
+          nearby = true;
+          pool = await load(fromIds, toIds);
+        }
+      }
+      const ranked = rankByTarget(pool, (r) => r.departureDate, target);
+      const offset = cursor ? Number(cursor.slice(2)) : 0;
+      const slice = ranked.slice(offset, offset + input.limit);
+      const toCard = await decorate(slice.map((x) => x.row));
+      return {
+        data: slice.map((x) => ({ ...toCard(x.row), nearTarget: x.near })),
+        nextCursor:
+          offset + input.limit < ranked.length ? `${nearby ? 'nb_' : ''}t_${offset + input.limit}` : null,
+        ...(nearby ? { nearby: true } : {}),
+      };
+    }
 
     // sort=nearest: drivers see who waits closest to them (offset cursor "o_<n>").
     if (input.sort === 'nearest') {
@@ -463,6 +508,8 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
         ...(input.departureDate !== undefined ? { departureDate: new Date(input.departureDate) } : {}),
         ...(input.flexible !== undefined ? { flexible: input.flexible } : {}),
         ...(input.flightNumber !== undefined ? { flightNumber: input.flightNumber } : {}),
+        ...(req.kind === 'airport' && input.meetWithSign !== undefined ? { meetWithSign: input.meetWithSign } : {}),
+        ...(req.kind === 'airport' && input.luggageCount !== undefined ? { luggageCount: input.luggageCount } : {}),
         ...(input.comment !== undefined
           ? { comment: input.comment === null ? null : redactContactInfo(input.comment).clean }
           : {}),
