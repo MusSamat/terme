@@ -135,6 +135,30 @@ export const openapiDocument = {
           },
         ],
       },
+      AdminAuthResult: {
+        type: 'object',
+        properties: {
+          accessToken: { type: 'string' },
+          refreshToken: { type: 'string' },
+          accessTokenExpiresIn: { type: 'integer' },
+          refreshTokenExpiresIn: { type: 'integer' },
+          admin: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              email: { type: 'string', format: 'email' },
+              name: { type: 'string' },
+              role: { type: 'string', enum: ['admin', 'superadmin'] },
+              mustChangePassword: { type: 'boolean' },
+              totpEnabled: { type: 'boolean' },
+              totpEnrollmentRequired: {
+                type: 'boolean',
+                description: 'ADMIN_TOTP_REQUIRED and not enrolled yet → the UI must run TOTP setup',
+              },
+            },
+          },
+        },
+      },
       PublicUser: {
         type: 'object',
         properties: {
@@ -806,7 +830,7 @@ export const openapiDocument = {
             },
           },
         },
-        responses: { '200': { description: 'AdminAuthResult (same shape as login)' }, ...errorResponses },
+        responses: { '200': { description: 'OK', content: jsonOk('AdminAuthResult') }, ...errorResponses },
       },
     },
     '/auth/admin/totp/disable': {
@@ -862,7 +886,7 @@ export const openapiDocument = {
             },
           },
         },
-        responses: { '200': { description: 'OK' }, ...errorResponses },
+        responses: { '200': { description: 'OK', content: jsonOk('AdminAuthResult') }, ...errorResponses },
       },
     },
 
