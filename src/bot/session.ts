@@ -1,13 +1,40 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 
+export type Flow = 'findTrip' | 'needRide' | 'findPassengers' | 'publish' | 'airport' | 'book' | 'offer' | 'link';
+export type Step =
+  | 'code'
+  | 'from'
+  | 'to'
+  | 'date'
+  | 'time'
+  | 'seats'
+  | 'price'
+  | 'comment'
+  | 'flight'
+  | 'car'
+  | 'confirm'
+  | 'airportDir'
+  | 'airportPick';
+
+// Last search shown — survives a «book» / «offer» flow so «Показать ещё» keeps working.
+export interface SearchState {
+  kind: 'trips' | 'requests';
+  from?: number;
+  to?: number | null;
+  date?: string | null;
+  airport?: boolean;
+  cursor: string | null;
+}
+
 // Draft of the multi-step flow the chat is in. Stored as JSON in bot_sessions.
 export interface Draft {
-  flow?: 'findTrip' | 'needRide' | 'findPassengers' | 'publish' | 'airport' | 'book' | 'offer' | 'link';
-  step?: 'code' | 'from' | 'to' | 'date' | 'time' | 'seats' | 'price' | 'comment' | 'flight' | 'car' | 'confirm' | 'airportDir' | 'airportPick';
+  flow?: Flow;
+  step?: Step;
+  history?: Step[]; // steps actually asked, for «Назад»
   from?: number;
   to?: number | null;
   date?: string | null; // YYYY-MM-DD, Asia/Bishkek
-  time?: string;
+  time?: string; // HH:MM; '' = flexible (passenger request)
   seats?: number;
   maxSeats?: number;
   price?: number;
@@ -17,9 +44,10 @@ export interface Draft {
   point?: { lat: number; lng: number };
   airportDir?: 'to' | 'from';
   airportId?: number;
-  cityId?: number;
   targetId?: string;
-  cursor?: string | null;
+  idem?: string; // Idempotency-Key of this flow's create call — a double «Подтвердить» replays
+  hintTime?: string; // offer: the time the passenger asked for
+  search?: SearchState;
   phone?: string; // link flow: the number the WhatsApp code went to
 }
 
@@ -34,7 +62,8 @@ export function createSessionStore(prisma: PrismaClient) {
   }
 
   async function set(telegramId: number, draft: Draft): Promise<void> {
-    const data = draft as unknown as Prisma.InputJsonValue;
+    // Round-trip drops keys set to undefined (how a step value is cleared).
+    const data = JSON.parse(JSON.stringify(draft)) as Prisma.InputJsonValue;
     const state = draft.flow && draft.step ? `${draft.flow}:${draft.step}` : null;
     await prisma.botSession.upsert({
       where: { telegramId: BigInt(telegramId) },

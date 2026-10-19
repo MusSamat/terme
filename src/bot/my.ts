@@ -1,144 +1,117 @@
 import type { PrismaClient, User } from '@prisma/client';
 import { InlineKeyboard, type Context } from 'grammy';
-import { errorText, showMenu, type BotServices } from './context.js';
+import type { BookingDTO } from '@/modules/bookings/bookings.service.js';
+import type { TripListItem } from '@/modules/trips/trips.service.js';
+import { showMenu, type BotServices } from './context.js';
 import { TEXTS, langOf, type Lang } from './texts.js';
-import { escapeHtml, formatWhen, waLink } from './format.js';
+import { HTML, escapeHtml, formatWhen, placeName, waLink } from './format.js';
 
 const LIVE_BOOKING = new Set(['pending', 'viewed', 'accepted']);
+const SECTION_LIMIT = 10; // cards per section — keeps the chat readable
 
-// «Мои»: what the user is waiting for / has to act on, with one-tap actions.
+// «Мои»: an overview with one button per non-empty section, then cards with
+// one-tap actions (cancel / accept / decline). Actions live in my.actions.ts.
 export function createMy(prisma: PrismaClient, svc: BotServices) {
-  const html = { parse_mode: 'HTML' as const };
+  async function load(user: User) {
+    const [bookings, requests, active, inTransit] = await Promise.all([
+      svc.bookings().listMy(user.id, { limit: 50 }),
+      svc.requests.listMy(user.id),
+      svc.trips().myTrips(user.id, { tab: 'active', limit: SECTION_LIMIT }),
+      svc.trips().myTrips(user.id, { tab: 'in_transit', limit: SECTION_LIMIT }),
+    ]);
+    return {
+      bookings: bookings.data.filter((b) => LIVE_BOOKING.has(b.status)).slice(0, SECTION_LIMIT),
+      requests: requests.data.filter((r) => r.status === 'open').slice(0, SECTION_LIMIT),
+      trips: [...inTransit.data, ...active.data].slice(0, SECTION_LIMIT),
+    };
+  }
+
+  // Pending booking requests per trip (one service call, no per-trip queries).
+  async function waitingByTrip(user: User): Promise<Map<string, number>> {
+    const incoming = (await svc.bookings().listIncoming(user.id, { limit: 50 })).data;
+    const map = new Map<string, number>();
+    for (const b of incoming) map.set(b.tripId, (map.get(b.tripId) ?? 0) + 1);
+    return map;
+  }
 
   async function show(ctx: Context, user: User): Promise<void> {
-    const l = langOf(user.language);
-    const t = TEXTS[l];
-    let shown = 0;
-    await ctx.reply(t.myTitle, html);
-
-    const bookings = (await svc.bookings().listMy(user.id, { limit: 20 })).data.filter((b) =>
-      LIVE_BOOKING.has(b.status),
-    );
-    for (const b of bookings) {
-      shown++;
-      const kb = new InlineKeyboard();
-      const phone = b.trip.driver.phone;
-      if (b.status === 'accepted' && phone) kb.url(t.writeWhatsapp, waLink(phone)).row();
-      kb.text(t.cancelBooking, `cb:${b.id}`);
-      await ctx.reply(
-        [
-          `🎫 <b>${escapeHtml(b.trip.originCity)} → ${escapeHtml(b.trip.destinationCity)}</b>`,
-          `🕒 ${formatWhen(b.trip.departureAt, l)} · 💺 ${b.seatsCount}`,
-          `👤 ${escapeHtml(b.trip.driver.name)}${b.status === 'accepted' && phone ? ` · 📞 ${phone}` : ''}`,
-          t.bookingStatus[b.status] ?? b.status,
-        ].join('\n'),
-        { ...html, reply_markup: kb },
-      );
-    }
-
-    const requests = (await svc.requests.listMy(user.id)).data.filter((r) => r.status === 'open');
-    for (const r of requests) {
-      shown++;
-      const offers = await prisma.passengerRequestResponse.count({ where: { requestId: r.id, status: 'pending' } });
-      const kb = new InlineKeyboard();
-      if (offers > 0) kb.text(t.offers(offers), `of:${r.id}`).row();
-      kb.text(t.cancelRequest, `cr:${r.id}`);
-      await ctx.reply(
-        [`🙋 <b>${escapeHtml(r.originCity)} → ${escapeHtml(r.destinationCity)}</b>`, `🕒 ${formatWhen(r.departureDate, l, !r.flexible)} · 👥 ${r.seatsNeeded}`].join('\n'),
-        { ...html, reply_markup: kb },
-      );
-    }
-
-    const trips = (await svc.trips().myTrips(user.id, { tab: 'active', limit: 20 })).data;
-    for (const trip of trips) {
-      shown++;
-      const waiting = await prisma.booking.count({ where: { tripId: trip.id, status: { in: ['pending', 'viewed'] } } });
-      const kb = new InlineKeyboard();
-      if (waiting > 0) kb.text(t.incoming(waiting), `in:${trip.id}`).row();
-      kb.text(t.cancelTrip, `ct:${trip.id}`);
-      await ctx.reply(
-        [
-          `🚗 <b>${escapeHtml(trip.originCity)} → ${escapeHtml(trip.destinationCity)}</b>`,
-          `🕒 ${formatWhen(trip.departureAt, l)} · 💺 ${trip.seatsAvailable}/${trip.seatsTotal} · 💰 ${trip.pricePerSeat} ${t.som}`,
-        ].join('\n'),
-        { ...html, reply_markup: kb },
-      );
-    }
-
-    if (shown === 0) await showMenu(ctx, user, t.myEmpty);
+    const t = TEXTS[langOf(user.language)];
+    const { bookings, requests, trips } = await load(user);
+    if (bookings.length + requests.length + trips.length === 0) return showMenu(ctx, user, t.myEmpty);
+    const waiting = trips.length ? [...(await waitingByTrip(user)).values()].reduce((a, b) => a + b, 0) : 0;
+    const kb = new InlineKeyboard();
+    if (bookings.length) kb.text(t.myBookings(bookings.length), 'my:b').row();
+    if (requests.length) kb.text(t.myRequests(requests.length), 'my:r').row();
+    if (trips.length) kb.text(t.myTrips(trips.length, waiting), 'my:t').row();
+    await ctx.reply(t.myTitle, { ...HTML, reply_markup: kb });
   }
 
-  async function incoming(ctx: Context, user: User, tripId: string): Promise<void> {
+  async function section(ctx: Context, user: User, which: string): Promise<boolean> {
     const l = langOf(user.language);
-    const t = TEXTS[l];
-    const list = (await svc.bookings().listIncoming(user.id, { tripId, limit: 20 })).data;
-    if (list.length === 0) return void (await ctx.reply(t.myEmpty));
-    for (const b of list) {
-      const rating = b.passenger.rating ? ` ★${b.passenger.rating.toFixed(1)}` : '';
-      await ctx.reply(`👤 <b>${escapeHtml(b.passenger.name)}</b>${rating}\n💺 ${b.seatsCount}${b.comment ? `\n💬 ${escapeHtml(b.comment)}` : ''}`, {
-        ...html,
-        reply_markup: new InlineKeyboard().text(t.accept, `accept_booking_${b.id}`).text(t.reject, `reject_booking_${b.id}`),
+    const data = await load(user);
+    if (which === 'b') return render(ctx, l, data.bookings.map((b) => bookingCard(b, l)));
+    if (which === 'r') {
+      const counts = await prisma.passengerRequestResponse.groupBy({
+        by: ['requestId'],
+        where: { requestId: { in: data.requests.map((r) => r.id) }, status: 'pending' },
+        _count: { _all: true },
       });
+      const offers = new Map(counts.map((c) => [c.requestId, c._count._all]));
+      return render(
+        ctx,
+        l,
+        data.requests.map((r) => {
+          const kb = new InlineKeyboard();
+          const n = offers.get(r.id) ?? 0;
+          if (n > 0) kb.text(TEXTS[l].offers(n), `of:${r.id}`).row();
+          kb.text(TEXTS[l].cancelRequest, `cr:${r.id}`);
+          const route = `${escapeHtml(placeName(r.origin, l))} → ${escapeHtml(placeName(r.destination, l))}`;
+          const when = `${formatWhen(r.departureDate, l, !r.flexible)}${r.flexible ? ` · ${TEXTS[l].flexibleLabel}` : ''}`;
+          return [`🙋 <b>${route}</b>\n🕒 ${when} · 👥 ${r.seatsNeeded}`, kb];
+        }),
+      );
     }
+    if (which === 't') {
+      const waiting = await waitingByTrip(user);
+      return render(ctx, l, data.trips.map((trip) => tripCard(trip, l, waiting.get(trip.id) ?? 0)));
+    }
+    return false;
   }
 
-  async function offers(ctx: Context, user: User, requestId: string): Promise<void> {
-    const l = langOf(user.language);
-    const t = TEXTS[l];
-    try {
-      const list = (await svc.responses().listResponses(requestId, user.id)).filter((r) => r.status === 'pending');
-      if (list.length === 0) return void (await ctx.reply(t.myEmpty));
-      for (const r of list) {
-        const rating = r.driver.rating ? ` ★${r.driver.rating.toFixed(1)}` : '';
-        await ctx.reply(
-          `🚗 <b>${escapeHtml(r.driver.name)}</b>${rating}\n🕒 ${formatWhen(r.departureTime, l)} · 💰 ${r.price} ${t.som}${r.message ? `\n💬 ${escapeHtml(r.message)}` : ''}`,
-          { ...html, reply_markup: new InlineKeyboard().text(t.acceptOffer, `oa:${r.id}`).text(t.declineOffer, `od:${r.id}`) },
-        );
-      }
-    } catch (err) {
-      await ctx.reply(errorText(err, l));
-    }
-  }
-
-  // Cancel / accept / decline actions; returns false for unknown callbacks.
-  async function onCallback(ctx: Context, user: User, data: string): Promise<boolean> {
-    const l: Lang = langOf(user.language);
-    const [key, id] = [data.slice(0, 2), data.slice(3)];
-    try {
-      switch (key) {
-        case 'in':
-          await incoming(ctx, user, id);
-          return true;
-        case 'of':
-          await offers(ctx, user, id);
-          return true;
-        case 'cb':
-          await svc.bookings().cancel(id, user.id, {});
-          break;
-        case 'ct':
-          await svc.trips().cancel(id, user.id);
-          break;
-        case 'cr':
-          await svc.requests.cancel(id, user.id);
-          break;
-        case 'oa':
-        case 'od': {
-          const resp = await prisma.passengerRequestResponse.findUnique({ where: { id }, select: { requestId: true } });
-          if (!resp) return false;
-          if (key === 'oa') await svc.responses().acceptResponse(user.id, resp.requestId, id);
-          else await svc.responses().declineResponse(user.id, resp.requestId, id);
-          break;
-        }
-        default:
-          return false;
-      }
-      await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
-      await ctx.reply(TEXTS[l].done);
-    } catch (err) {
-      await ctx.reply(errorText(err, l));
-    }
+  async function render(ctx: Context, l: Lang, cards: Array<[string, InlineKeyboard]>): Promise<boolean> {
+    if (cards.length === 0) await ctx.reply(TEXTS[l].sectionEmpty);
+    for (const [text, kb] of cards) await ctx.reply(text, { ...HTML, reply_markup: kb });
     return true;
   }
 
-  return { show, onCallback };
+  return { show, section };
+}
+
+function bookingCard(b: BookingDTO, l: Lang): [string, InlineKeyboard] {
+  const t = TEXTS[l];
+  const phone = b.status === 'accepted' ? (b.trip.driver.phone ?? null) : null;
+  const kb = new InlineKeyboard();
+  if (phone) kb.url(t.writeWhatsapp, waLink(phone)).row();
+  kb.text(t.cancelBooking, `cb:${b.id}`);
+  const text = [
+    `🎫 <b>${escapeHtml(b.trip.originCity)} → ${escapeHtml(b.trip.destinationCity)}</b>`,
+    `🕒 ${formatWhen(b.trip.departureAt, l)} · 💺 ${b.seatsCount} · 💰 ${b.pricePerSeatSnapshot} ${t.som}`,
+    t.personLine(escapeHtml(b.trip.driver.name), phone),
+    t.bookingStatus[b.status] ?? b.status,
+  ].join('\n');
+  return [text, kb];
+}
+
+function tripCard(trip: TripListItem, l: Lang, waiting: number): [string, InlineKeyboard] {
+  const t = TEXTS[l];
+  const departed = new Date(trip.departureAt).getTime() <= Date.now();
+  const kb = new InlineKeyboard();
+  if (waiting > 0) kb.text(t.incoming(waiting), `in:${trip.id}`).row();
+  // Departed → the driver finishes it; before that it can still be cancelled.
+  kb.text(departed ? t.completeTrip : t.cancelTrip, `${departed ? 'tf' : 'ct'}:${trip.id}`);
+  const text = [
+    `🚗 <b>${escapeHtml(placeName(trip.origin, l))} → ${escapeHtml(placeName(trip.destination, l))}</b>${departed ? ` · ${t.inTransit}` : ''}`,
+    `🕒 ${formatWhen(trip.departureAt, l)} · 💺 ${trip.seatsAvailable}/${trip.seatsTotal} · 💰 ${trip.pricePerSeat} ${t.som}`,
+  ].join('\n');
+  return [text, kb];
 }

@@ -3,7 +3,8 @@ import { Bot } from 'grammy';
 import type { Update } from 'grammy/types';
 import { testPrisma } from '../../tests/setup.js';
 import { CITY } from '../../tests/cities.js';
-import { createUser, createVerifiedDriver } from '../../tests/factories.js';
+import { createBooking, createTrip, createUser, createVerifiedDriver } from '../../tests/factories.js';
+import { createPassengerRequestsService } from '@/modules/passenger-requests/passenger-requests.service.js';
 import { registerBotHandlers } from './index.js';
 import { getSentMessages, clearSentMessages } from '@/lib/otpCapture.js';
 
@@ -76,6 +77,16 @@ const lastButtons = (): string[] => {
   const msg = [...calls].reverse().find((c) => c.method === 'sendMessage' && c.payload['reply_markup']);
   const markup = msg?.payload['reply_markup'] as { inline_keyboard?: Array<Array<{ callback_data?: string }>> };
   return (markup?.inline_keyboard ?? []).flat().map((b) => b.callback_data ?? '');
+};
+
+const toasts = (): string[] =>
+  calls.filter((c) => c.method === 'answerCallbackQuery' && c.payload['text']).map((c) => String(c.payload['text']));
+const draft = async () =>
+  ((await testPrisma.botSession.findUnique({ where: { telegramId: BigInt(TG) } }))?.data ?? {}) as Record<string, unknown>;
+// DD.MM of a Bishkek day `days` from now.
+const ddmm = (days: number): string => {
+  const [, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bishkek' }).format(new Date(Date.now() + days * 86_400_000)).split('-');
+  return `${d}.${m}`;
 };
 
 async function linkedUser(mode: 'passenger' | 'driver' = 'passenger') {
@@ -202,7 +213,12 @@ describe('Telegram bot', () => {
     await press('n:3');
     await text('900');
     await text('Выезд от ЦУМа');
+    const beforeConfirm = await draft();
     await press('ok');
+    // A second «Подтвердить» (double tap racing the first) replays, not duplicates.
+    await testPrisma.botSession.create({ data: { telegramId: BigInt(TG), data: beforeConfirm as never } });
+    await press('ok');
+    expect(await testPrisma.trip.count({ where: { driverId: u.id } })).toBe(1);
     const trip = await testPrisma.trip.findFirstOrThrow({ where: { driverId: u.id } });
     expect(trip).toMatchObject({ destinationCityId: CITY['Нарын'], seatsTotal: 3, pricePerSeat: 900, comment: 'Выезд от ЦУМа' });
     expect(sent().at(-1)).toContain('опубликована');
@@ -228,6 +244,8 @@ describe('Telegram bot', () => {
 
     await press(`tb:${trip.id}`);
     await press('n:2');
+    expect(sent().at(-1)).toContain('1000 × 2 = 2000');
+    await press('ok');
     const booking = await testPrisma.booking.findFirstOrThrow({ where: { passengerId: u.id } });
     expect(booking).toMatchObject({ tripId: trip.id, seatsCount: 2, status: 'pending' });
   });
@@ -251,5 +269,113 @@ describe('Telegram bot', () => {
     expect(lastButtons().some((b) => b.startsWith('d:'))).toBe(true);
     await press('d:any');
     expect(sent().at(-1)).toMatch(/Пока ничего нет|Оставьте заявку/);
+  });
+  it('«Назад» returns to the previous step and forgets its answer', async () => {
+    await linkedUser('passenger');
+    await text('🙋 Нужна поездка');
+    await press(`pl:${CITY['Бишкек']}`);
+    await press(`pl:${CITY['Каракол']}`);
+    expect(lastButtons()).toContain('bk');
+    await press('bk');
+    expect(await draft()).toMatchObject({ step: 'to', from: CITY['Бишкек'] });
+    expect((await draft())['to']).toBeUndefined();
+    expect(sent().at(-1)).toContain('Куда?');
+  });
+
+  it('rejects the same place as origin and destination', async () => {
+    await linkedUser('passenger');
+    await text('🔍 Найти поездку');
+    await press(`pl:${CITY['Бишкек']}`);
+    await press(`pl:${CITY['Бишкек']}`);
+    expect(sent().at(-1)).toContain('совпадают');
+    expect(await draft()).toMatchObject({ step: 'to' });
+  });
+
+  it('accepts a typed date and refuses a departure time that has passed', async () => {
+    await linkedUser('driver');
+    await text('➕ Опубликовать поездку');
+    await press(`pl:${CITY['Бишкек']}`);
+    await press(`pl:${CITY['Нарын']}`);
+    await text('завтра?');
+    expect(sent().at(-1)).toContain('ДД.ММ');
+    await text(ddmm(0));
+    expect(await draft()).toMatchObject({ step: 'time' });
+    await text('00:00');
+    expect(sent().at(-1)).toContain('30 минут');
+    expect((await draft())['time']).toBeUndefined();
+  });
+
+  it('a stale button answers with a toast instead of silence', async () => {
+    await linkedUser('passenger');
+    await press('n:2');
+    expect(toasts().at(-1)).toContain('устарела');
+  });
+
+  it('«Мои»: sections, cancel asks for confirmation first', async () => {
+    const u = await linkedUser('passenger');
+    const d = await createVerifiedDriver(testPrisma, { plate: 'BOTD3' });
+    const trip = await createTrip(testPrisma, d.id);
+    const booking = await createBooking(testPrisma, u.id, trip.id);
+    await text('📋 Мои');
+    expect(lastButtons()).toEqual(['my:b']);
+    await press('my:b');
+    expect(lastButtons()).toContain(`cb:${booking.id}`);
+    await press(`cb:${booking.id}`);
+    expect(lastButtons()).toEqual([`yb:${booking.id}`, 'no']);
+    expect((await testPrisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).status).toBe('pending');
+    await press(`yb:${booking.id}`);
+    expect((await testPrisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).status).toBe('cancelled_by_passenger');
+  });
+
+  it('driver accepts a booking from the notification and gets the passenger contact', async () => {
+    const driver = await linkedUser('driver');
+    const p = await createUser(testPrisma, { phone: '+996700555333' });
+    const trip = await createTrip(testPrisma, driver.id);
+    const booking = await createBooking(testPrisma, p.id, trip.id);
+    await press(`accept_booking_${booking.id}`);
+    expect((await testPrisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).status).toBe('accepted');
+    expect(sent().at(-1)).toContain('+996700555333');
+  });
+
+  it('driver offers a ride on a passenger request', async () => {
+    const driver = await linkedUser('driver');
+    const p = await createUser(testPrisma);
+    const req = await createPassengerRequestsService(testPrisma).create(p.id, {
+      originCityId: CITY['Бишкек'],
+      destinationCityId: CITY['Ош'],
+      seatsNeeded: 1,
+      departureDate: new Date(Date.now() + 48 * 60 * 60_000).toISOString(),
+      flexible: false,
+    });
+    await press(`ro:${req.id}`);
+    const hint = lastButtons().find((b) => b.startsWith('t:'))!;
+    await press(hint);
+    await text('1500');
+    await press('sk');
+    expect(sent().at(-1)).toContain('1500');
+    await press('ok');
+    const resp = await testPrisma.passengerRequestResponse.findFirstOrThrow({ where: { requestId: req.id } });
+    expect(resp).toMatchObject({ driverId: driver.id, price: 1500, status: 'pending' });
+  });
+
+  it('settings switch the language in place and resend the menu', async () => {
+    const u = await linkedUser('passenger');
+    await text('⚙️ Настройки');
+    await press('lang');
+    expect((await testPrisma.user.findUniqueOrThrow({ where: { id: u.id } })).language).toBe('kg');
+    expect(calls.some((c) => c.method === 'editMessageText' && String(c.payload['text']).includes('Кыргызча'))).toBe(true);
+    const menu = [...calls].reverse().find((c) => c.method === 'sendMessage')!.payload['reply_markup'] as {
+      keyboard: Array<Array<{ text: string }>>;
+    };
+    expect(menu.keyboard.flat().map((b) => b.text)).toContain('🔍 Сапар табуу');
+  });
+
+  it('ignores group chats', async () => {
+    await linkedUser('passenger');
+    await bot.handleUpdate({
+      update_id: updateId++,
+      message: { message_id: 5, date: 0, chat: { id: -100, type: 'group', title: 'g' }, from, text: '/start' },
+    } as Update);
+    expect(sent()).toHaveLength(0);
   });
 });

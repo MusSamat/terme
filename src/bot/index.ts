@@ -1,6 +1,7 @@
 import type { Bot, Context } from 'grammy';
-import { InlineKeyboard } from 'grammy';
+import type { User } from '@prisma/client';
 import { logger } from '@/lib/logger.js';
+import { AppError } from '@/lib/errors.js';
 import { createOtpMethods, linkTelegramContact } from '@/modules/auth/auth.otp.js';
 import {
   createBotServices,
@@ -13,9 +14,12 @@ import {
   type BotDeps,
 } from './context.js';
 import { createFlows } from './flows.js';
+import { createListing } from './listing.js';
 import { createMy } from './my.js';
-import { TEXTS, langOf, type Lang } from './texts.js';
-import { contactKeyboard, escapeHtml, mainMenu } from './format.js';
+import { createMyActions } from './my.actions.js';
+import { createSettings } from './settings.js';
+import { LEGACY_MENU, TEXTS, langOf, type Lang } from './texts.js';
+import { contactKeyboard, escapeHtml } from './format.js';
 
 /**
  * The Telegram bot is a full client: search, publish, book, passenger requests,
@@ -27,15 +31,11 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
   const { prisma } = deps;
   const svc = createBotServices(deps);
   const flows = createFlows(svc);
+  const listing = createListing(svc, flows);
   const my = createMy(prisma, svc);
+  const myActions = createMyActions(prisma, svc);
+  const settings = createSettings(prisma, svc);
   const otp = createOtpMethods(prisma);
-
-  async function finishLink(ctx: Context, userId: string): Promise<void> {
-    if (ctx.from) await svc.session.clear(ctx.from.id);
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
-    const t = TEXTS[langOf(user.language)];
-    await showMenu(ctx, user, `${t.linked}\n${t.modeNow(isDriverMode(user))}`);
-  }
 
   await bot.api
     .setMyCommands([
@@ -43,14 +43,31 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
       { command: 'find', description: 'Найти поездку / Сапар табуу' },
       { command: 'publish', description: 'Опубликовать поездку / Сапар жарыялоо' },
       { command: 'airport', description: 'Аэропорт' },
-      { command: 'my', description: 'Мои / Меникилер' },
+      { command: 'my', description: 'Мои / Менин сапарларым' },
       { command: 'settings', description: 'Настройки / Жөндөөлөр' },
+      { command: 'cancel', description: 'Отмена / Жокко чыгаруу' },
       { command: 'help', description: 'Помощь / Жардам' },
     ])
     .catch((err: unknown) => logger.warn({ err }, 'setMyCommands failed'));
 
-  // Menu buttons in both languages → action.
-  const MENU: Record<string, string> = {};
+  // The bot is a private assistant — groups and channels are ignored.
+  bot.use(async (ctx, next) => {
+    if (ctx.chat && ctx.chat.type !== 'private') return;
+    await next();
+  });
+
+  // Last-resort guard: an unexpected failure still answers the user.
+  bot.use(async (ctx, next) => {
+    try {
+      await next();
+    } catch (err) {
+      logger.warn({ err, update: ctx.update.update_id }, 'bot handler failed');
+      await ctx.reply(TEXTS[langOf(ctx.from?.language_code)].error).catch(() => undefined);
+    }
+  });
+
+  // Menu buttons in both languages (plus labels of older keyboards) → action.
+  const MENU: Record<string, string> = { ...LEGACY_MENU };
   for (const l of ['ru', 'kg'] as Lang[]) {
     const t = TEXTS[l];
     Object.assign(MENU, {
@@ -60,8 +77,8 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
       [t.menuPublish]: 'publish',
       [t.menuAirport]: 'airport',
       [t.menuMy]: 'my',
-      [t.menuModePassenger]: 'mode',
-      [t.menuModeDriver]: 'mode',
+      [t.menuToDriver]: 'mode',
+      [t.menuToPassenger]: 'mode',
       [t.menuSettings]: 'settings',
       [t.menuHelp]: 'help',
     });
@@ -85,23 +102,27 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
         return;
       case 'mode': {
         const next = isDriverMode(user) ? 'passenger' : 'driver';
-        const updated = await prisma.user.update({ where: { id: user.id }, data: { preferredMode: next } });
-        await showMenu(ctx, updated, TEXTS[l].modeNow(next === 'driver'));
+        await svc.users.updateSelf(user.id, { preferredMode: next });
+        await showMenu(ctx, { ...user, preferredMode: next }, TEXTS[l].modeNow(next === 'driver'));
         return;
       }
       case 'settings':
-        await ctx.reply(TEXTS[l].settingsTitle(l === 'kg' ? 'Кыргызча' : 'Русский', user.notificationsEnabled), {
-          parse_mode: 'HTML',
-          reply_markup: new InlineKeyboard()
-            .text(TEXTS[l].langButton, 'lang')
-            .row()
-            .text(user.notificationsEnabled ? TEXTS[l].notifyOff : TEXTS[l].notifyOn, 'notify'),
-        });
+        await settings.show(ctx, user);
         return;
       case 'help':
-        await ctx.reply(TEXTS[l].help, { parse_mode: 'HTML', reply_markup: mainMenu(l, isDriverMode(user)) });
+        await showMenu(ctx, user, TEXTS[l].help);
+        return;
+      case 'cancel':
+        await flows.cancel(ctx, user);
         return;
     }
+  }
+
+  async function finishLink(ctx: Context, userId: string): Promise<void> {
+    if (ctx.from) await svc.session.clear(ctx.from.id);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const t = TEXTS[langOf(user.language)];
+    await showMenu(ctx, user, `${t.linked}\n${t.modeNow(isDriverMode(user))}`);
   }
 
   bot.command('start', async (ctx) => {
@@ -121,6 +142,7 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
   bot.command('airport', (ctx) => runAction(ctx, 'airport'));
   bot.command('my', (ctx) => runAction(ctx, 'my'));
   bot.command('settings', (ctx) => runAction(ctx, 'settings'));
+  bot.command(['cancel', 'menu'], (ctx) => runAction(ctx, 'cancel'));
   bot.command('help', (ctx) => runAction(ctx, 'help'));
 
   // Sign-in: the user's OWN contact (user_id === sender) is Telegram-verified.
@@ -144,18 +166,32 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
         await svc.session.set(ctx.from.id, { flow: 'link', step: 'code', phone: result.phone });
         await ctx.reply(TEXTS[l].linkCodeSent(result.phone), { reply_markup: { remove_keyboard: true } });
       } catch (err) {
-        await ctx.reply(errorText(err, l));
+        await ctx.reply(errorText(err, l), { reply_markup: contactKeyboard(l) });
       }
       return;
     }
     if (result?.status !== 'ok') {
       await ctx.reply(result?.status === 'blocked' ? TEXTS[l].blocked : TEXTS[l].error, {
-        reply_markup: { remove_keyboard: true },
+        reply_markup: result?.status === 'blocked' ? { remove_keyboard: true } : contactKeyboard(l),
       });
       return;
     }
     await finishLink(ctx, result.userId);
   });
+
+  async function onLinkCode(ctx: Context, phone: string, text: string): Promise<void> {
+    const l = langOf(ctx.from?.language_code);
+    try {
+      await otp.consumeOtp(phone, text.replace(/\D/g, ''));
+    } catch (err) {
+      const tooMany = err instanceof AppError && (err.code === 'OTP_TOO_MANY_ATTEMPTS' || err.code === 'RATE_LIMITED');
+      await ctx.reply(tooMany ? errorText(err, l) : TEXTS[l].linkCodeWrong, { reply_markup: contactKeyboard(l) });
+      return;
+    }
+    const linked = await linkTelegramContact(prisma, ctx.from!.id, phone, ctx.from?.first_name, ctx.from?.language_code, true);
+    if (linked.status === 'ok') await finishLink(ctx, linked.userId);
+    else await ctx.reply(linked.status === 'blocked' ? TEXTS[l].blocked : TEXTS[l].error);
+  }
 
   bot.on('message:location', async (ctx) => {
     const user = await requireUser(prisma, ctx);
@@ -167,67 +203,38 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
     if (text.startsWith('/')) return;
     const action = MENU[text];
     if (action) {
-      if (ctx.from) await svc.session.clear(ctx.from.id);
+      await svc.session.clear(ctx.from.id);
       await runAction(ctx, action);
       return;
     }
-    const draft = ctx.from ? await svc.session.get(ctx.from.id) : {};
-    if (draft.flow === 'link' && draft.phone) {
-      const l = langOf(ctx.from?.language_code);
-      try {
-        await otp.consumeOtp(draft.phone, text.replace(/\D/g, ''));
-        const linked = await linkTelegramContact(prisma, ctx.from!.id, draft.phone, ctx.from?.first_name, ctx.from?.language_code, true);
-        if (linked.status === 'ok') await finishLink(ctx, linked.userId);
-        else await ctx.reply(linked.status === 'blocked' ? TEXTS[l].blocked : TEXTS[l].error);
-      } catch {
-        await ctx.reply(TEXTS[l].linkCodeWrong, { reply_markup: contactKeyboard(l) });
-      }
-      return;
-    }
+    const draft = await svc.session.get(ctx.from.id);
+    if (draft.flow === 'link' && draft.phone) return onLinkCode(ctx, draft.phone, text);
     const user = await requireUser(prisma, ctx);
     if (!user) return;
     if (!(await flows.onText(ctx, user, text))) await showMenu(ctx, user);
   });
 
   // ─── Inline buttons ─────────────────────────────────────────────────
+  async function onButton(ctx: Context, user: User, data: string): Promise<boolean> {
+    if (data === 'lang' || data === 'notify') return settings.onCallback(ctx, user, data);
+    if (await listing.onCallback(ctx, user, data)) return true;
+    if (await myActions.onCallback(ctx, user, data, (which) => my.section(ctx, user, which))) return true;
+    return flows.onCallback(ctx, user, data);
+  }
+
   bot.on('callback_query:data', async (ctx) => {
-    const data = ctx.callbackQuery.data;
-    await ctx.answerCallbackQuery().catch(() => undefined);
-    const user = await requireUser(prisma, ctx);
-    if (!user) return;
-    const l = langOf(user.language);
+    let toast: string | undefined;
     try {
-      if (data === 'lang') {
-        const updated = await prisma.user.update({
-          where: { id: user.id },
-          data: { language: l === 'kg' ? 'ru' : 'kg' },
-        });
-        await showMenu(ctx, updated, updated.language === 'kg' ? 'Тил: кыргызча' : 'Язык: русский');
-        return;
+      const user = await requireUser(prisma, ctx);
+      if (!user) return;
+      const l = langOf(user.language);
+      try {
+        if (!(await onButton(ctx, user, ctx.callbackQuery.data))) toast = TEXTS[l].stale;
+      } catch (err) {
+        await ctx.reply(errorText(err, l));
       }
-      if (data === 'notify') {
-        await prisma.user.update({ where: { id: user.id }, data: { notificationsEnabled: !user.notificationsEnabled } });
-        await ctx.reply(TEXTS[l].done);
-        return;
-      }
-      const decision = /^(accept|reject)_booking_(.+)$/.exec(data);
-      if (decision) {
-        const bookings = svc.bookings();
-        if (decision[1] === 'accept') await bookings.accept(decision[2]!, user.id);
-        else await bookings.reject(decision[2]!, user.id);
-        await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
-        await ctx.reply(TEXTS[l].done);
-        return;
-      }
-      if (data === 'go:needRide') return void (await flows.advance(ctx, user));
-      if (data.startsWith('tc:')) return void (await flows.revealContact(ctx, user, 'trip', data.slice(3)));
-      if (data.startsWith('rc:')) return void (await flows.revealContact(ctx, user, 'request', data.slice(3)));
-      if (data.startsWith('tb:')) return void (await flows.startBooking(ctx, user, data.slice(3)));
-      if (data.startsWith('ro:')) return void (await flows.startOffer(ctx, user, data.slice(3)));
-      if (await my.onCallback(ctx, user, data)) return;
-      if (await flows.onCallback(ctx, user, data)) return;
-    } catch (err) {
-      await ctx.reply(errorText(err, l));
+    } finally {
+      await ctx.answerCallbackQuery(toast ? { text: toast } : undefined).catch(() => undefined);
     }
   });
 }
