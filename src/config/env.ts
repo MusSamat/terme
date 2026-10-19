@@ -29,6 +29,14 @@ const EnvSchema = z.object({
     z.string().url().optional(),
   ),
 
+  // M3: Express 'trust proxy' — a hop count ("1" = one Nginx in front) or a
+  // comma list of trusted proxy IPs/CIDRs/names ("127.0.0.1,10.0.0.0/8",
+  // "loopback"). Wrong values let clients spoof X-Forwarded-For (rate limits).
+  TRUST_PROXY: z
+    .string()
+    .default('1')
+    .transform((v) => (/^\d+$/.test(v.trim()) ? Number(v.trim()) : v.split(',').map((p) => p.trim()).filter(Boolean))),
+
   DATABASE_URL: z.string().url(),
   TEST_DATABASE_URL: z.string().url().optional(),
 

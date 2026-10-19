@@ -42,7 +42,8 @@ export function createApp(prisma: PrismaClient, notifier: Notifier = new NoopNot
   const app = express();
 
   // Behind Nginx — trust X-Forwarded-For so rate-limit and logs see the real IP.
-  app.set('trust proxy', 1);
+  // Hop count or proxy allowlist from TRUST_PROXY (default 1).
+  app.set('trust proxy', env.TRUST_PROXY);
   app.disable('x-powered-by');
 
   app.use(helmet({ contentSecurityPolicy: isProd ? undefined : false }));
