@@ -72,6 +72,10 @@ export interface TripListItem {
   // Exact boarding / drop-off spot (map pin); null → the settlement itself.
   originPoint: MeetingPointDto | null;
   destinationPoint: MeetingPointDto | null;
+  // Boarding point: the pin, else the origin settlement (null only when the
+  // settlement has no coordinates).
+  lat: number | null;
+  lng: number | null;
   pickupCities: string[];
   dropoffCities: string[];
   stops: Array<{ kind: 'pickup' | 'dropoff'; place: PlaceRef }>;
@@ -116,6 +120,9 @@ export interface TripCardItem {
   origin: PlaceRef;
   destination: PlaceRef;
   originPoint: MeetingPointDto | null;
+  // Boarding point: the pin, else the origin settlement.
+  lat: number | null;
+  lng: number | null;
   pickupCities: string[];
   departureAt: Date;
   departureWindowEnd: Date | null;
@@ -1091,6 +1098,11 @@ function boardingPoint(row: TripRow): { lat: number; lng: number } | null {
     : null;
 }
 
+function boardingLatLng(row: TripRow): { lat: number | null; lng: number | null } {
+  const p = boardingPoint(row);
+  return { lat: p?.lat ?? null, lng: p?.lng ?? null };
+}
+
 function distanceKm(me: { lat: number; lng: number }, p: { lat: number; lng: number } | null): number {
   return p ? haversineKm(me, p) : Number.POSITIVE_INFINITY;
 }
@@ -1127,6 +1139,7 @@ export function toCardItem(row: TripRow, opts: { liked: boolean }): TripCardItem
     origin: toPlaceRef(row.origin),
     destination: toPlaceRef(row.destination),
     originPoint: toPoint(row.originLat, row.originLng, row.originAddress, row.originArea),
+    ...boardingLatLng(row),
     pickupCities: stopNames(row, 'pickup'),
     departureAt: row.departureAt,
     departureWindowEnd: row.departureWindowEnd,
@@ -1182,6 +1195,7 @@ export function toListItem(
     destination: toPlaceRef(row.destination),
     originPoint: toPoint(row.originLat, row.originLng, row.originAddress, row.originArea),
     destinationPoint: toPoint(row.destinationLat, row.destinationLng, row.destinationAddress, row.destinationArea),
+    ...boardingLatLng(row),
     pickupCities: stopNames(row, 'pickup'),
     dropoffCities: stopNames(row, 'dropoff'),
     stops: row.stops.map((s) => ({

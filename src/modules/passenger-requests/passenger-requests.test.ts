@@ -130,6 +130,22 @@ describe('GET /v1/passenger-requests', () => {
     expect(new Date(res.body.data[0].departureDate) <= new Date(res.body.data[1].departureDate)).toBe(true);
   });
 
+  it('cards carry the waiting lat/lng (pin, else settlement) and Kyrgyz place names', async () => {
+    const p = await createUser(testPrisma);
+    const pinned = await createRequest(p, { originPoint: { lat: 42.8746, lng: 74.6122 } });
+    const plain = await createRequest(p, { departureDate: dayAfter() });
+    const bishkek = await testPrisma.city.findUniqueOrThrow({ where: { id: CITY['Бишкек'] } });
+
+    const res = await request(app).get('/v1/passenger-requests');
+    const byId = new Map(res.body.data.map((r: { id: string }) => [r.id, r]));
+    expect(byId.get(pinned.body.id)).toMatchObject({ lat: 42.8746, lng: 74.6122 });
+    expect(byId.get(plain.body.id)).toMatchObject({
+      lat: bishkek.lat,
+      lng: bishkek.lng,
+      origin: { id: bishkek.id, nameRu: bishkek.nameRu, nameKg: bishkek.nameKg },
+    });
+  });
+
   it('filters by from_city', async () => {
     const p = await createUser(testPrisma);
     await createRequest(p);                                             // Бишкек → Ош

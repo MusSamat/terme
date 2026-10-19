@@ -42,6 +42,10 @@ export interface PassengerRequestCardItem {
   destination: PlaceRef;
   // Where the passenger waits (map pin); null → the settlement itself.
   originPoint: MeetingPointDto | null;
+  // Where the passenger waits: the pin, else the origin settlement (null only
+  // when the settlement has no coordinates).
+  lat: number | null;
+  lng: number | null;
   seatsNeeded: number;
   departureDate: string;
   flexible: boolean;
@@ -110,6 +114,7 @@ export function toCardItem(
   row: RequestRow,
   opts: { liked: boolean; myResponse?: { id: string; status: string } | null },
 ): PassengerRequestCardItem {
+  const wp = waitingPoint(row);
   return {
     id: row.id,
     passengerId: row.passengerId,
@@ -122,6 +127,8 @@ export function toCardItem(
     origin: toPlaceRef(row.origin),
     destination: toPlaceRef(row.destination),
     originPoint: toPoint(row.originLat, row.originLng, row.originAddress, row.originArea),
+    lat: wp?.lat ?? null,
+    lng: wp?.lng ?? null,
     seatsNeeded: row.seatsNeeded,
     departureDate: row.departureDate.toISOString(),
     flexible: row.flexible,

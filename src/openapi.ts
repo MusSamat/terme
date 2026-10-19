@@ -299,6 +299,8 @@ export const openapiDocument = {
           origin: { $ref: '#/components/schemas/Place' },
           destination: { $ref: '#/components/schemas/Place' },
           originPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
+          lat: { type: 'number', nullable: true, description: 'Boarding point: originPoint, else origin settlement coords' },
+          lng: { type: 'number', nullable: true },
           pickupCities: { type: 'array', items: { type: 'string' } },
           departureAt: { type: 'string', format: 'date-time' },
           departureWindowEnd: { type: 'string', format: 'date-time', nullable: true },
@@ -344,6 +346,8 @@ export const openapiDocument = {
           destination: { $ref: '#/components/schemas/Place' },
           originPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
           destinationPoint: { allOf: [{ $ref: '#/components/schemas/MeetingPoint' }], nullable: true },
+          lat: { type: 'number', nullable: true, description: 'Boarding point: originPoint, else origin settlement coords' },
+          lng: { type: 'number', nullable: true },
           pickupCities: { type: 'array', items: { type: 'string' } },
           dropoffCities: { type: 'array', items: { type: 'string' } },
           stops: {

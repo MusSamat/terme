@@ -557,6 +557,31 @@ describe('Meeting points and sort=nearest', () => {
     expect(far.body.error.details.reason).toBe('point_far_from_city');
   });
 
+  it('list cards and detail carry the boarding lat/lng (pin, else settlement) and Kyrgyz place names', async () => {
+    const d = await createVerifiedDriver(testPrisma, { plate: 'MP9' });
+    const pinned = await request(app)
+      .post('/v1/trips')
+      .set('Authorization', `Bearer ${d.accessToken}`)
+      .set('Idempotency-Key', idempotencyKey())
+      .send(tripPayload({ originPoint: { lat: 42.8746, lng: 74.6122 } }));
+    const plain = await request(app)
+      .post('/v1/trips')
+      .set('Authorization', `Bearer ${d.accessToken}`)
+      .set('Idempotency-Key', idempotencyKey())
+      .send(tripPayload({ destinationCityId: CITY['Нарын'] }));
+    const bishkek = await testPrisma.city.findUniqueOrThrow({ where: { id: CITY['Бишкек'] } });
+
+    const res = await request(app).get(`/v1/trips?from_id=${CITY['Бишкек']}`);
+    const byId = new Map(res.body.data.map((t: { id: string }) => [t.id, t]));
+    expect(byId.get(pinned.body.id)).toMatchObject({ lat: 42.8746, lng: 74.6122 });
+    expect(byId.get(plain.body.id)).toMatchObject({
+      lat: bishkek.lat,
+      lng: bishkek.lng,
+      origin: { id: bishkek.id, nameRu: bishkek.nameRu, nameKg: bishkek.nameKg },
+    });
+    expect(plain.body).toMatchObject({ lat: bishkek.lat, lng: bishkek.lng });
+  });
+
   it('sort=nearest ranks trips by distance from the viewer to the boarding pin', async () => {
     const near = await createVerifiedDriver(testPrisma, { plate: 'MP2' });
     const far = await createVerifiedDriver(testPrisma, { plate: 'MP3' });
