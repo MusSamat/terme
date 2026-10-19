@@ -262,16 +262,115 @@ describe('Telegram bot', () => {
     expect(menu.keyboard.flat().map((b) => b.text)).toContain('➕ Опубликовать поездку');
   });
 
-  it('airport: a passenger picks «Манас» and gets transfer search', async () => {
-    await linkedUser('passenger');
-    const manas = await testPrisma.city.findUniqueOrThrow({ where: { soateCode: 'airport:FRU' } });
-    await text('✈️ Аэропорт');
-    await press('ad:to');
-    await press(`ap:${manas.id}`);
-    expect(lastButtons().some((b) => b.startsWith('d:'))).toBe(true);
-    await press('d:any');
-    expect(sent().at(-1)).toMatch(/Пока ничего нет|Оставьте заявку/);
+  describe('airport transfers', () => {
+    const DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bishkek' }).format(new Date(Date.now() + 2 * 86_400_000));
+    const at = (hm: string) => new Date(`${DAY}T${hm}:00+06:00`);
+    const airportId = async (code: string) => (await testPrisma.city.findUniqueOrThrow({ where: { soateCode: code } })).id;
+
+    it('to the airport: airport → direction → chips → flight time → suggested pickup → ranked results', async () => {
+      await linkedUser('passenger');
+      const manas = await airportId('airport:FRU');
+      const osh = await airportId('airport:OSS');
+      const d = await createVerifiedDriver(testPrisma, { plate: 'BOTAP1' });
+      for (const hm of ['03:00', '04:30', '09:00']) {
+        await testPrisma.trip.create({
+          data: {
+            driverId: d.id, kind: 'airport', originCityId: CITY['Бишкек'], destinationCityId: manas,
+            originCity: 'Бишкек', destinationCity: 'Аэропорт', departureAt: at(hm), estimatedDurationMin: 45,
+            pricePerSeat: 400, seatsTotal: 3, seatsAvailable: 3, status: 'active',
+          },
+        });
+      }
+
+      await text('✈️ Аэропорт');
+      expect(lastButtons()).toEqual([`ap:${manas}`, `ap:${osh}`, 'x']);
+      await press(`ap:${manas}`);
+      expect(lastButtons()).toEqual(['ad:to', 'ad:from', 'bk', 'x']);
+      await press('ad:to');
+      expect(sent().at(-1)).toContain('Откуда едете в аэропорт');
+      expect(lastButtons()).toEqual(expect.arrayContaining([`pl:${CITY['Бишкек']}`, `pl:${CITY['Кант']}`, 'ae:other']));
+      await press(`pl:${CITY['Бишкек']}`);
+      expect(await draft()).toMatchObject({ from: CITY['Бишкек'], to: manas, step: 'date' });
+      expect(lastButtons()).not.toContain('d:any');
+      await press(`d:${DAY}`);
+      expect(lastButtons()).toContain('fh:07:00');
+      await text('06:10');
+      // ~23 km → 30 min; international: at the airport 2.5 h before.
+      expect(sent().at(-1)).toContain('Выезд в 03:10');
+      expect(lastButtons()).toEqual(expect.arrayContaining(['pu:ok', 'fy:domestic']));
+      await press('fy:domestic');
+      expect(sent().at(-1)).toContain('Выезд в 04:10');
+      await text('04:00');
+      expect(await draft()).toMatchObject({ step: 'flight', pickupAt: at('04:00').toISOString() });
+      await text('su 1882');
+
+      const cards = sent().filter((m) => m.startsWith('✈️ <b>') && m.includes('🕒'));
+      expect(cards).toHaveLength(3);
+      expect(cards.map((c) => /\d{2}:\d{2}/.exec(c)?.[0])).toEqual(['04:30', '03:00', '09:00']);
+      expect(((await draft())['search'] as Record<string, unknown>)['target']).toBe(at('04:00').toISOString());
+    });
+
+    it('from the airport: typed district, arrival time, then a request with a sign and luggage', async () => {
+      const u = await linkedUser('passenger');
+      const manas = await airportId('airport:FRU');
+      const leninsky = await airportId('41711201000000');
+      await text('✈️ Аэропорт');
+      await press(`ap:${manas}`);
+      await press('ad:from');
+      await press('ae:other');
+      expect(sent().at(-1)).toContain('Напишите название');
+      await text('Ленинский');
+      expect(lastButtons()).toContain(`pl:${leninsky}`);
+      await press(`pl:${leninsky}`);
+      await press(`d:${DAY}`);
+      expect(sent().at(-1)).toContain('прилёт');
+      await text('05:40');
+      expect(await draft()).toMatchObject({ step: 'flight', pickupAt: at('05:40').toISOString() });
+      await press('bk');
+      expect(await draft()).toMatchObject({ step: 'flightTime' });
+      await press('fh:05:00');
+      await press('sk');
+      expect(lastButtons()).toContain('go:needRide');
+      await press('go:needRide');
+      await press('n:2');
+      expect(sent().at(-1)).toContain('табличкой');
+      await press('sg:1');
+      expect(lastButtons()).toEqual(['lg:0', 'lg:1', 'lg:2', 'lg:3', 'lg:4', 'lg:5', 'bk', 'x']);
+      await press('lg:3');
+      await press('sk');
+      expect(sent().at(-1)).toContain('Багаж: 3');
+      await press('ok');
+      const r = await testPrisma.passengerRequest.findFirstOrThrow({ where: { passengerId: u.id } });
+      expect(r).toMatchObject({
+        kind: 'airport', originCityId: manas, destinationCityId: leninsky, seatsNeeded: 2,
+        meetWithSign: true, luggageCount: 3, flightNumber: null,
+      });
+      expect(r.departureDate.toISOString()).toBe(at('05:00').toISOString());
+    });
+
+    it('a driver publishes a transfer at the suggested pickup time', async () => {
+      const u = await linkedUser('driver');
+      const osh = await airportId('airport:OSS');
+      await text('✈️ Аэропорт');
+      await press(`ap:${osh}`);
+      await press('ad:to');
+      await press(`pl:${CITY['Ош']}`);
+      await press(`d:${DAY}`);
+      await press('fh:09:00');
+      // ~10 km → 15 min; Ош defaults to domestic: 1.5 h.
+      expect(sent().at(-1)).toContain('Выезд в 07:15');
+      await press('pu:ok');
+      expect(await draft()).toMatchObject({ flow: 'publish', step: 'seats', date: DAY, time: '07:15' });
+      await press('n:3');
+      await text('300');
+      await press('sk');
+      await press('ok');
+      const trip = await testPrisma.trip.findFirstOrThrow({ where: { driverId: u.id } });
+      expect(trip).toMatchObject({ kind: 'airport', originCityId: CITY['Ош'], destinationCityId: osh, pricePerSeat: 300 });
+      expect(trip.departureAt.toISOString()).toBe(at('07:15').toISOString());
+    });
   });
+
   it('«Назад» returns to the previous step and forgets its answer', async () => {
     await linkedUser('passenger');
     await text('🙋 Нужна поездка');

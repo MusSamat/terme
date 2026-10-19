@@ -31,6 +31,9 @@ export function requestCard(r: PassengerRequestCardItem, l: Lang): string {
     `🕒 ${formatWhen(r.departureDate, l, !r.flexible)}${r.flexible ? ` · ${t.flexibleLabel}` : ''}`,
     `👥 ${t.seatsLeft(r.seatsNeeded)}`,
     `👤 ${escapeHtml(r.passenger.name)}${rated(r.passenger.rating)}${r.flightNumber ? ` · ✈️ ${escapeHtml(r.flightNumber)}` : ''}`,
+    [r.meetWithSign ? `🪧 ${t.signLine}` : '', r.luggageCount !== null ? `🧳 ${t.luggageLine(r.luggageCount)}` : '']
+      .filter(Boolean)
+      .join(' · '),
     r.myResponse?.status === 'pending' ? t.offered : '',
   ]
     .filter(Boolean)

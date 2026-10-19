@@ -15,7 +15,12 @@ export type Step =
   | 'car'
   | 'confirm'
   | 'airportDir'
-  | 'airportPick';
+  | 'airportPick'
+  | 'airportEnd'
+  | 'flightTime'
+  | 'pickup'
+  | 'sign'
+  | 'luggage';
 
 // Last search shown — survives a «book» / «offer» flow so «Показать ещё» keeps working.
 export interface SearchState {
@@ -24,6 +29,7 @@ export interface SearchState {
   to?: number | null;
   date?: string | null;
   airport?: boolean;
+  target?: string; // ISO; airport searches rank by closeness to it
   cursor: string | null;
 }
 
@@ -45,6 +51,13 @@ export interface Draft {
   point?: { lat: number; lng: number };
   airportDir?: 'to' | 'from';
   airportId?: number;
+  airportEnd?: number; // the other end of the transfer
+  flightAt?: string; // ISO: flight departure (to the airport) / arrival (from it)
+  pickupAt?: string; // ISO: when the ride leaves (= flightAt from the airport)
+  flightType?: 'international' | 'domestic';
+  asDriver?: boolean; // airport flow: publish instead of search
+  meetSign?: boolean; // airport request: meet with a name sign
+  luggage?: number; // airport request: luggage pieces 0–5
   targetId?: string;
   idem?: string; // Idempotency-Key of this flow's create call — a double «Подтвердить» replays
   hintTime?: string; // offer: the time the passenger asked for

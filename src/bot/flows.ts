@@ -5,7 +5,18 @@ import { MeetingPoint } from '@/modules/cities/cities.schemas.js';
 import { isDriverMode, showMenu, type BotServices } from './context.js';
 import type { Draft, Flow, Step } from './session.js';
 import { TEXTS, langOf, type Lang } from './texts.js';
-import { bishkekDate, isTooSoon, mainMenu, parseDate, parseTime, placeLabel, withNav } from './format.js';
+import {
+  MIN_LEAD_MS,
+  bishkekDate,
+  bishkekInstant,
+  bishkekTime,
+  isTooSoon,
+  mainMenu,
+  parseDate,
+  parseTime,
+  placeLabel,
+  withNav,
+} from './format.js';
 import { SEARCH_FLOWS, createPrompts, seatsLimit } from './prompts.js';
 import { createActions } from './actions.js';
 
@@ -13,9 +24,10 @@ import { createActions } from './actions.js';
 const ORDER: Record<Flow, Step[]> = {
   findTrip: ['from', 'to', 'date'],
   findPassengers: ['from', 'to', 'date'],
-  needRide: ['from', 'to', 'date', 'time', 'seats', 'flight', 'comment', 'confirm'],
+  needRide: ['from', 'to', 'date', 'time', 'seats', 'flight', 'sign', 'luggage', 'comment', 'confirm'],
   publish: ['car', 'from', 'to', 'date', 'time', 'seats', 'price', 'comment', 'confirm'],
-  airport: ['airportDir', 'airportPick'], // then continues as findTrip / publish
+  // Then: passengers get transfers ranked by the flight time, drivers publish.
+  airport: ['airportPick', 'airportDir', 'airportEnd', 'date', 'flightTime', 'pickup', 'flight'],
   book: ['seats', 'confirm'],
   offer: ['date', 'time', 'price', 'comment', 'confirm'],
   link: ['code'], // handled in index.ts (sign-in), never advanced here
@@ -34,18 +46,33 @@ const STEP_KEYS: Record<Step, Array<keyof Draft>> = {
   car: ['carId', 'maxSeats'],
   airportDir: ['airportDir'],
   airportPick: ['airportId'],
+  airportEnd: ['airportEnd', 'from', 'to'],
+  flightTime: ['flightAt', 'pickupAt'],
+  pickup: ['pickupAt'],
+  sign: ['meetSign'],
+  luggage: ['luggage'],
   confirm: [],
   code: [],
 };
 
 function filled(d: Draft, step: Step): boolean {
   switch (step) {
-    case 'flight': // only matters for airport transfers
-      return d.flight !== undefined || d.airportId === undefined;
+    case 'flight': // only matters for passengers of airport transfers
+      return d.flight !== undefined || d.airportId === undefined || d.asDriver === true;
+    case 'sign': // airport requests met at the airport
+      return d.meetSign !== undefined || d.airportId === undefined || d.from !== d.airportId;
+    case 'luggage':
+      return d.luggage !== undefined || d.airportId === undefined;
     case 'car':
       return d.carId !== undefined;
     case 'airportPick':
       return d.airportId !== undefined;
+    case 'airportEnd':
+      return d.airportEnd !== undefined;
+    case 'flightTime':
+      return d.flightAt !== undefined;
+    case 'pickup':
+      return d.pickupAt !== undefined;
     case 'confirm':
     case 'code':
       return false;
@@ -62,17 +89,24 @@ export function createFlows(svc: BotServices) {
 
   async function start(ctx: Context, user: User, flow: Flow, preset: Partial<Draft> = {}): Promise<void> {
     const { search } = await svc.session.get(tg(ctx));
-    await svc.session.set(tg(ctx), { flow, idem: crypto.randomUUID(), ...preset, ...(search ? { search } : {}) });
+    const role = flow === 'airport' ? { asDriver: isDriverMode(user) } : {};
+    await svc.session.set(tg(ctx), {
+      flow,
+      idem: crypto.randomUUID(),
+      ...role,
+      ...preset,
+      ...(search ? { search } : {}),
+    });
     await advance(ctx, user);
   }
 
   // Moves to the first unfilled step and asks for it; runs the action at the end.
   async function advance(ctx: Context, user: User): Promise<void> {
-    for (let guard = 0; guard < 4; guard++) {
+    for (let guard = 0; guard < 6; guard++) {
       const d = await svc.session.get(tg(ctx));
       if (!d.flow) return showMenu(ctx, user);
       const step = ORDER[d.flow].find((s) => !filled(d, s));
-      if (!step) return actions.finish(ctx, user, d);
+      if (!step) return d.flow === 'airport' ? airportDone(ctx, user, d) : actions.finish(ctx, user, d);
       const asked = d.history ?? [];
       const next: Draft = { ...d, step, history: asked.at(-1) === step ? asked : [...asked, step] };
       await svc.session.set(tg(ctx), next);
@@ -122,6 +156,42 @@ export function createFlows(svc: BotServices) {
         for (const p of found) kb.text(placeLabel(p, l), `pl:${p.id}`).row();
         await ctx.reply(t.pickPlace, { reply_markup: withNav(kb, l, (d.history?.length ?? 0) > 1) });
         return true;
+      }
+      case 'airportEnd': {
+        const found = (await svc.cities.search(text, 7, 'any')).filter((p) => p.id !== d.airportId);
+        if (found.length === 0) return say(t.noPlaces);
+        const kb = new InlineKeyboard();
+        for (const p of found) kb.text(placeLabel(p, l), `pl:${p.id}`).row();
+        await ctx.reply(t.pickPlace, { reply_markup: withNav(kb, l, true) });
+        return true;
+      }
+      case 'flightTime': {
+        const time = parseTime(text);
+        if (!time) return say(t.badTime);
+        const patch = flightTimePatch(d, time);
+        if (!patch) return say(t.flightTooSoon);
+        await svc.session.patch(tg(ctx), patch);
+        break;
+      }
+      case 'pickup': {
+        const time = parseTime(text);
+        if (!time) return say(t.badTime);
+        const flightAt = new Date(d.flightAt!);
+        let at = bishkekInstant(bishkekDate(flightAt), time);
+        // «23:30» for a 02:00 flight is the evening before.
+        if (at >= flightAt) at = new Date(at.getTime() - 86_400_000);
+        if (at.getTime() < Date.now() + MIN_LEAD_MS) return say(t.timeTooSoon);
+        await svc.session.patch(tg(ctx), { pickupAt: at.toISOString() });
+        break;
+      }
+      case 'luggage': {
+        const n = Number(text);
+        if (!Number.isInteger(n) || n < 0 || n > 5) {
+          await prompts.ask(ctx, user, d);
+          return true;
+        }
+        await svc.session.patch(tg(ctx), { luggage: n });
+        break;
       }
       case 'date': {
         const date = parseDate(text);
@@ -209,6 +279,16 @@ export function createFlows(svc: BotServices) {
         await advance(ctx, user);
         return true;
       case 'pl': {
+        if (d.step === 'airportEnd') {
+          const id = Number(value);
+          if (!Number.isInteger(id) || id <= 0) return false;
+          if (id === d.airportId) {
+            await ctx.reply(t.samePlace);
+            return true;
+          }
+          patch = d.airportDir === 'from' ? { airportEnd: id, from: d.airportId, to: id } : { airportEnd: id, from: id, to: d.airportId };
+          break;
+        }
         if (d.step !== 'from' && d.step !== 'to') return false;
         if (value === 'any' && !(d.step === 'to' && d.flow === 'findPassengers')) return false;
         const id = value === 'any' ? null : Number(value);
@@ -265,10 +345,51 @@ export function createFlows(svc: BotServices) {
         if (d.step !== 'airportDir') return false;
         patch = { airportDir: value === 'from' ? 'from' : 'to' };
         break;
-      case 'ap':
+      case 'ap': {
         if (d.step !== 'airportPick') return false;
-        await ctx.editMessageReplyMarkup().catch(() => undefined);
-        return onAirportPicked(ctx, user, d, Number(value));
+        const airport = (await svc.cities.airports()).find((a) => a.id === Number(value));
+        if (!airport) return false;
+        patch = { airportId: airport.id, flightType: airport.flightType };
+        break;
+      }
+      case 'ae':
+        if (d.step !== 'airportEnd') return false;
+        await ctx.reply(t.airportEndType, { reply_markup: withNav(new InlineKeyboard(), lang(user), true) });
+        return true;
+      case 'fh': {
+        if (d.step !== 'flightTime' || parseTime(value) !== value) return false;
+        const fp = flightTimePatch(d, value);
+        if (!fp) {
+          await ctx.reply(t.flightTooSoon);
+          return true;
+        }
+        patch = fp;
+        break;
+      }
+      case 'fy':
+        if (d.step !== 'pickup' || (value !== 'international' && value !== 'domestic')) return false;
+        patch = { flightType: value };
+        break;
+      case 'pu': {
+        if (d.step !== 'pickup') return false;
+        const pickupAt = (await prompts.suggestPickup(d)).pickupAt;
+        if (new Date(pickupAt).getTime() < Date.now() + MIN_LEAD_MS) {
+          await ctx.reply(t.timeTooSoon);
+          return true;
+        }
+        patch = { pickupAt };
+        break;
+      }
+      case 'sg':
+        if (d.step !== 'sign') return false;
+        patch = { meetSign: value === '1' };
+        break;
+      case 'lg': {
+        const n = Number(value);
+        if (d.step !== 'luggage' || !Number.isInteger(n) || n < 0 || n > 5) return false;
+        patch = { luggage: n };
+        break;
+      }
       case 'ok':
         if (d.step !== 'confirm') return false;
         await ctx.editMessageReplyMarkup().catch(() => undefined);
@@ -284,15 +405,32 @@ export function createFlows(svc: BotServices) {
     return true;
   }
 
-  // Airport: the served city is the other end; drivers publish, passengers search.
-  async function onAirportPicked(ctx: Context, user: User, d: Draft, airportId: number): Promise<boolean> {
-    const airport = (await svc.cities.airports()).find((a) => a.id === airportId);
-    if (!airport) return false;
-    const city = airport.serves?.id;
-    const to = d.airportDir === 'from' ? city : airportId;
-    const from = d.airportDir === 'from' ? airportId : city;
-    await start(ctx, user, isDriverMode(user) ? 'publish' : 'findTrip', { from, to, airportId });
-    return true;
+  // Flight time on the flight day: from the airport the ride leaves at arrival.
+  function flightTimePatch(d: Draft, time: string): Partial<Draft> | null {
+    if (isTooSoon(d.date ?? '', time)) return null;
+    const flightAt = bishkekInstant(d.date!, time).toISOString();
+    return d.airportDir === 'from' ? { flightAt, pickupAt: flightAt } : { flightAt };
+  }
+
+  // End of the airport steps: drivers publish the transfer, passengers get
+  // transfers ranked by the pickup time (or are offered a request).
+  async function airportDone(ctx: Context, user: User, d: Draft): Promise<void> {
+    const at = new Date(d.pickupAt!);
+    const ride: Partial<Draft> = {
+      from: d.from,
+      to: d.to,
+      airportId: d.airportId,
+      airportDir: d.airportDir,
+      date: bishkekDate(at),
+      time: bishkekTime(at),
+    };
+    if (d.asDriver) return start(ctx, user, 'publish', ride);
+    await actions.runSearch(
+      ctx,
+      user,
+      { kind: 'trips', from: d.from, to: d.to ?? null, date: ride.date, airport: true, target: d.pickupAt, cursor: null },
+      { ...ride, flight: d.flight ?? null },
+    );
   }
 
   return {

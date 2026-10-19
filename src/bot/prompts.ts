@@ -3,11 +3,13 @@ import { InlineKeyboard, type Context } from 'grammy';
 import type { PlaceRef } from '@/lib/places.js';
 import { isDriverMode, type BotServices } from './context.js';
 import type { Draft, Flow } from './session.js';
-import { TEXTS, langOf } from './texts.js';
+import { TEXTS, langOf, type Lang } from './texts.js';
 import {
   HAS_WEB_LINKS,
   HTML,
+  MIN_LEAD_MS,
   bishkekInstant,
+  bishkekTime,
   escapeHtml,
   formatWhen,
   isTooSoon,
@@ -19,9 +21,16 @@ import {
   withNav,
 } from './format.js';
 
-export const SEARCH_FLOWS = new Set<Flow>(['findTrip', 'findPassengers', 'airport']);
+// Flows whose date step offers «Любая дата».
+export const SEARCH_FLOWS = new Set<Flow>(['findTrip', 'findPassengers']);
 
 const TIME_SLOTS = ['05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'];
+// Flights run around the clock — quick picks every two hours.
+const FLIGHT_SLOTS = ['01:00', '03:00', '05:00', '07:00', '09:00', '11:00', '13:00', '15:00', '17:00', '19:00', '21:00', '23:00'];
+
+// Airport title for the bot: «Манас · Бишкек» / «Ош».
+export const airportTitle = (a: { titleRu: string; titleKg: string }, l: Lang): string =>
+  l === 'kg' ? a.titleKg : a.titleRu;
 
 // Upper bound of the seats step — mirrors the API schemas (booking ≤ 4,
 // trip ≤ 7 and ≤ the car, request ≤ 8).
@@ -57,7 +66,7 @@ export function createPrompts(svc: BotServices) {
           if (i % 3 === 2) kb.row();
         });
         if (d.flow && SEARCH_FLOWS.has(d.flow)) kb.row().text(t.anyDate, 'd:any');
-        await ctx.reply(t.askDate, { ...HTML, reply_markup: nav(kb) });
+        await ctx.reply(d.flow === 'airport' ? t.askFlightDate : t.askDate, { ...HTML, reply_markup: nav(kb) });
         return null;
       }
       case 'time': {
@@ -112,16 +121,64 @@ export function createPrompts(svc: BotServices) {
         await ctx.reply(t.chooseCar, { reply_markup: nav(kb) });
         return null;
       }
-      case 'airportDir':
-        await ctx.reply(t.airportAsk, {
-          ...HTML,
-          reply_markup: nav(new InlineKeyboard().text(t.toAirport, 'ad:to').text(t.fromAirport, 'ad:from')),
-        });
-        return null;
       case 'airportPick': {
         const kb = new InlineKeyboard();
-        for (const a of await svc.cities.airports()) kb.text(placeName(a, l), `ap:${a.id}`).row();
-        await ctx.reply(t.pickAirport, { reply_markup: nav(kb) });
+        for (const a of await svc.cities.airports()) kb.text(`✈️ ${airportTitle(a, l)}`, `ap:${a.id}`).row();
+        await ctx.reply(t.pickAirport, { ...HTML, reply_markup: nav(kb) });
+        return null;
+      }
+      case 'airportDir': {
+        const airport = (await svc.cities.airports()).find((a) => a.id === d.airportId);
+        await ctx.reply(t.airportDirAsk(escapeHtml(airport ? airportTitle(airport, l) : '')), {
+          ...HTML,
+          reply_markup: nav(new InlineKeyboard().text(t.toAirport, 'ad:to').row().text(t.fromAirport, 'ad:from')),
+        });
+        return null;
+      }
+      case 'airportEnd': {
+        const airport = (await svc.cities.airports()).find((a) => a.id === d.airportId);
+        const kb = new InlineKeyboard();
+        (airport?.popularDestinations ?? []).forEach((p, i) => {
+          kb.text(placeName(p, l), `pl:${p.id}`);
+          if (i % 3 === 2) kb.row();
+        });
+        kb.row().text(t.otherPlace, 'ae:other');
+        await ctx.reply(d.airportDir === 'from' ? t.airportEndFrom : t.airportEndTo, { ...HTML, reply_markup: nav(kb) });
+        return null;
+      }
+      case 'flightTime': {
+        const kb = new InlineKeyboard();
+        FLIGHT_SLOTS.filter((h) => !isTooSoon(d.date ?? '', h)).forEach((h, i) => {
+          kb.text(h, `fh:${h}`);
+          if (i % 4 === 3) kb.row();
+        });
+        await ctx.reply(d.airportDir === 'from' ? t.askFlightArrival : t.askFlightDeparture, { ...HTML, reply_markup: nav(kb) });
+        return null;
+      }
+      case 'pickup': {
+        const s = await suggestPickup(d);
+        const flight = bishkekTime(d.flightAt!);
+        const intl = s.flightType === 'international';
+        const kb = new InlineKeyboard();
+        const late = new Date(s.pickupAt).getTime() < Date.now() + MIN_LEAD_MS;
+        if (!late) kb.text(t.acceptPickup(bishkekTime(s.pickupAt)), 'pu:ok').row();
+        kb.text(intl ? t.domesticFlight : t.internationalFlight, `fy:${intl ? 'domestic' : 'international'}`);
+        const text = late
+          ? t.pickupLate(flight)
+          : t.pickupSuggest(bishkekTime(s.pickupAt), flight, intl, String(s.bufferMin / 60).replace('.', ','), s.travelMin);
+        await ctx.reply(text, { ...HTML, reply_markup: nav(kb) });
+        return null;
+      }
+      case 'sign':
+        await ctx.reply(t.askSign, {
+          ...HTML,
+          reply_markup: nav(new InlineKeyboard().text(t.signYes, 'sg:1').text(t.signNo, 'sg:0')),
+        });
+        return null;
+      case 'luggage': {
+        const kb = new InlineKeyboard();
+        for (let n = 0; n <= 5; n++) kb.text(String(n), `lg:${n}`);
+        await ctx.reply(t.askLuggage, { ...HTML, reply_markup: nav(kb) });
         return null;
       }
       case 'confirm':
@@ -133,6 +190,11 @@ export function createPrompts(svc: BotServices) {
       default:
         return null;
     }
+  }
+
+  // Pickup for a flight from the other end of the transfer (the API helper).
+  function suggestPickup(d: Draft) {
+    return svc.cities.pickupSuggestion(d.airportId!, d.airportEnd!, new Date(d.flightAt!), d.flightType);
   }
 
   async function replyNoCar(ctx: Context, user: User): Promise<void> {
@@ -165,10 +227,12 @@ export function createPrompts(svc: BotServices) {
       price ? `💰 ${price}` : '',
       car ? `🚗 ${escapeHtml(`${car.make} ${car.model} · ${car.plate}`)}` : '',
       d.flight ? `✈️ ${escapeHtml(d.flight)}` : '',
+      d.meetSign ? `🪧 ${t.signLine}` : '',
+      d.luggage !== undefined ? `🧳 ${t.luggageLine(d.luggage)}` : '',
       d.comment ? `💬 ${escapeHtml(d.comment)}` : '',
     ];
     return [...lines.filter(Boolean), '', t.confirmAsk].join('\n');
   }
 
-  return { ask, replyNoCar };
+  return { ask, replyNoCar, suggestPickup };
 }

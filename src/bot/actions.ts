@@ -41,7 +41,7 @@ export function createActions(svc: BotServices) {
             airport: d.airportId !== undefined,
             cursor: null,
           };
-          await runSearch(ctx, user, search, d.airportId);
+          await runSearch(ctx, user, search, d.airportId !== undefined ? { airportId: d.airportId } : {});
           return;
         }
         case 'needRide': {
@@ -53,6 +53,8 @@ export function createActions(svc: BotServices) {
             flexible: !d.time,
             ...(d.comment ? { comment: d.comment } : {}),
             ...(d.flight ? { flightNumber: d.flight } : {}),
+            ...(d.meetSign !== undefined ? { meetWithSign: d.meetSign } : {}),
+            ...(d.luggage !== undefined ? { luggageCount: d.luggage } : {}),
             ...(d.point ? { originPoint: d.point } : {}),
           });
           await svc.requests.create(user.id, body);
@@ -123,8 +125,17 @@ export function createActions(svc: BotServices) {
     user: User,
     l: Lang,
   ): Promise<{ cards: Array<[string, InlineKeyboard]>; nextCursor: string | null; nearby?: boolean }> {
-    const date = s.date ? bishkekInstant(s.date, '12:00').toISOString() : undefined;
-    const base = { from_id: s.from, to_id: s.to ?? undefined, date, sort: 'time' as const, limit: PAGE, cursor: s.cursor ?? undefined };
+    // Airport searches rank the flight's day by closeness to the pickup time.
+    const date = s.date && !s.target ? bishkekInstant(s.date, '12:00').toISOString() : undefined;
+    const base = {
+      from_id: s.from,
+      to_id: s.to ?? undefined,
+      date,
+      ...(s.target ? { target_time: s.target } : {}),
+      sort: 'time' as const,
+      limit: PAGE,
+      cursor: s.cursor ?? undefined,
+    };
     if (s.kind === 'requests') {
       const p = await svc.requests.list(base, user.id);
       return { cards: p.data.map((r) => [requestCard(r, l), requestButtons(r, l)]), nextCursor: p.nextCursor, nearby: p.nearby };
@@ -144,7 +155,8 @@ export function createActions(svc: BotServices) {
     return { cards: p.data.map((trip) => [tripCard(trip, l), tripButtons(trip, l)]), nextCursor: p.nextCursor, nearby: p.nearby };
   }
 
-  async function runSearch(ctx: Context, user: User, s: SearchState, airportId?: number): Promise<void> {
+  // `preset`: what a «Нужна поездка» offered on an empty result starts with.
+  async function runSearch(ctx: Context, user: User, s: SearchState, preset: Partial<Draft> = {}): Promise<void> {
     const l = langOf(user.language);
     const t = TEXTS[l];
     const first = s.cursor === null;
@@ -157,7 +169,7 @@ export function createActions(svc: BotServices) {
         return;
       }
       // Nothing yet → offer to post a request with the same route.
-      await svc.session.set(tg(ctx), { flow: 'needRide', from: s.from, to: s.to, airportId });
+      await svc.session.set(tg(ctx), { flow: 'needRide', from: s.from, to: s.to, ...preset });
       await ctx.reply(t.nothingFound, {
         reply_markup: new InlineKeyboard().text(t.menuNeedRide, 'go:needRide').row().text(t.cancel, 'x'),
       });
@@ -170,7 +182,11 @@ export function createActions(svc: BotServices) {
     else await svc.session.patch(tg(ctx), { search });
     if (first) {
       // The header also restores the plain main menu (the 📍 button is no longer needed).
-      const when = s.date ? formatWhen(bishkekInstant(s.date, '12:00'), l, false) : t.anyDate;
+      const when = s.target
+        ? formatWhen(s.target, l)
+        : s.date
+          ? formatWhen(bishkekInstant(s.date, '12:00'), l, false)
+          : t.anyDate;
       const title = s.kind === 'requests' ? t.resultsRequests : t.resultsTrips;
       await ctx.reply(title(await routeLabel(s, l), when), { ...HTML, reply_markup: mainMenu(l, isDriverMode(user)) });
       if (page.nearby) await ctx.reply(t.nearbyNote);
@@ -188,5 +204,5 @@ export function createActions(svc: BotServices) {
     return true;
   }
 
-  return { finish, more };
+  return { finish, more, runSearch };
 }
