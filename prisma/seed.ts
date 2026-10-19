@@ -1,5 +1,10 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import {
+  DEFAULT_SUPERADMIN_EMAIL,
+  DEFAULT_SUPERADMIN_TEMP_PASSWORD,
+  superadminTempPasswordProblem,
+} from '../src/config/superadmin.js';
 
 // tsx does not auto-load .env the way the Prisma CLI does, so load it here.
 // Node 20.12+ built-in; no dotenv dep needed.
@@ -17,22 +22,26 @@ process.loadEnvFile?.('.env');
 // scripts/cities) — nothing to seed here.
 
 async function seedSuperadmin(prisma: PrismaClient): Promise<void> {
-  const email = (process.env.SUPERADMIN_EMAIL ?? 'superadmin@popytchik.kg').toLowerCase();
-  const tempPassword =
-    process.env.SUPERADMIN_TEMP_PASSWORD ?? 'change-on-first-login-please';
+  const email = (process.env.SUPERADMIN_EMAIL ?? DEFAULT_SUPERADMIN_EMAIL).toLowerCase();
+  // H3: production never seeds the public default / a weak temp password.
+  if (process.env.NODE_ENV === 'production') {
+    const problem = superadminTempPasswordProblem(process.env.SUPERADMIN_TEMP_PASSWORD);
+    if (problem) throw new Error(`[seed] refusing to seed superadmin: ${problem}`);
+  }
+  const tempPassword = process.env.SUPERADMIN_TEMP_PASSWORD ?? DEFAULT_SUPERADMIN_TEMP_PASSWORD;
 
   const existing = await prisma.admin.findUnique({ where: { email } });
   if (existing) {
-    // The temp password is a KNOWN literal — never leave the flag unset. If a
-    // prior run (or a manual edit) cleared mustChangePassword while the account
-    // still holds the seed password, re-force it so requireAdmin (M3) blocks all
-    // admin routes until the password is rotated on first login.
-    if (!existing.mustChangePassword) {
+    // Re-force mustChangePassword ONLY while the account still holds the temp
+    // password (requireAdmin then blocks every admin route until it's rotated).
+    // A rotated password must never be flipped back to «must change».
+    const stillTemp = await bcrypt.compare(tempPassword, existing.passwordHash);
+    if (stillTemp && !existing.mustChangePassword) {
       await prisma.admin.update({
         where: { id: existing.id },
         data: { mustChangePassword: true },
       });
-      console.warn(`[seed] superadmin ${email} exists — re-forced mustChangePassword`);
+      console.warn(`[seed] superadmin ${email} still has the temp password — re-forced mustChangePassword`);
     } else {
       console.warn(`[seed] superadmin ${email} already exists — skipping`);
     }

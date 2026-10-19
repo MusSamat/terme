@@ -47,10 +47,11 @@ function baseOptions(req?: Request): CookieOptions {
 }
 
 export function setRefreshCookie(res: Response, name: string, token: string, req?: Request): void {
-  res.cookie(name, token, {
-    ...baseOptions(req),
-    maxAge: env.JWT_REFRESH_INACTIVITY_DAYS * 24 * 60 * 60 * 1000,
-  });
+  const maxAge =
+    name === REFRESH_COOKIE.admin
+      ? env.ADMIN_REFRESH_TTL_HOURS * 60 * 60 * 1000
+      : env.JWT_REFRESH_INACTIVITY_DAYS * 24 * 60 * 60 * 1000;
+  res.cookie(name, token, { ...baseOptions(req), maxAge });
 }
 
 export function clearRefreshCookie(res: Response, name: string, req?: Request): void {

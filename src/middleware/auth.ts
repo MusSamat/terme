@@ -2,6 +2,10 @@ import type { RequestHandler } from 'express';
 import { verifyAccessToken, verifyAdminAccessToken, type Role } from '@/lib/jwt.js';
 import { Errors } from '@/lib/errors.js';
 import { getPrisma } from '@/db/prisma.js';
+import { env } from '@/config/env.js';
+
+// H2: routes reachable before TOTP enrolment (when ADMIN_TOTP_REQUIRED).
+const TOTP_ENROLMENT_PATHS = ['/admin/change-password', '/admin/totp/setup', '/admin/totp/confirm'];
 
 function extractBearer(header: string | undefined): string | null {
   if (!header) return null;
@@ -68,7 +72,14 @@ export const requireAdmin: RequestHandler = async (req, _res, next) => {
     const decoded = verifyAdminAccessToken(token);
     const admin = await getPrisma().admin.findUnique({
       where: { id: decoded.sub },
-      select: { id: true, email: true, role: true, isActive: true, mustChangePassword: true },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        isActive: true,
+        mustChangePassword: true,
+        totpEnabled: true,
+      },
     });
     if (!admin || !admin.isActive) {
       return next(Errors.unauthorized({ reason: 'admin_not_found_or_inactive' }));
@@ -79,6 +90,15 @@ export const requireAdmin: RequestHandler = async (req, _res, next) => {
     // clears (adminChangePassword sets mustChangePassword=false).
     if (admin.mustChangePassword && !req.path.endsWith('/admin/change-password')) {
       return next(Errors.forbidden({ reason: 'must_change_password' }));
+    }
+    // H2: same gating until TOTP is enrolled — only change-password and the
+    // TOTP setup/confirm endpoints stay reachable.
+    if (
+      env.ADMIN_TOTP_REQUIRED &&
+      !admin.totpEnabled &&
+      !TOTP_ENROLMENT_PATHS.some((p) => req.path.endsWith(p))
+    ) {
+      return next(Errors.forbidden({ reason: 'totp_enrollment_required' }));
     }
 
     req.admin = { id: admin.id, email: admin.email, role: admin.role as 'admin' | 'superadmin' };

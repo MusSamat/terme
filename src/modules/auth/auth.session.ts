@@ -169,20 +169,16 @@ export function createSessionMethods(prisma: PrismaClient, _notifier: Notifier) 
     });
   }
 
-  // Admin refresh — verifies the JWT signature, checks the admin is still active,
-  // and (M1) enforces a revocation epoch: any refresh token minted BEFORE the
-  // admin row's last update (which includes password changes, see
-  // adminChangePassword) is rejected. This makes admin refresh tokens revocable
-  // on password change without a per-token store (no schema change): the JWT
-  // `iat` is compared against admin.updatedAt.
+  // Admin refresh — verifies the JWT signature, checks the admin is still
+  // active and (M6) that the token's epoch matches admins.token_epoch, which is
+  // bumped on logout / password change / TOTP change. Tokens without an epoch
+  // (minted before M6) are rejected — admins sign in once more.
   async function adminRefresh(token: string): Promise<AdminRefreshResult> {
     const decoded = verifyAdminRefreshToken(token);
     const admin = await prisma.admin.findUnique({ where: { id: decoded.sub } });
     if (!admin || !admin.isActive) throw Errors.unauthorized({ reason: 'admin_gone' });
-    // `iat` is seconds; drop sub-second on updatedAt so same-second issuance
-    // (sign right after the row's own update) isn't spuriously rejected.
-    if (decoded.iat * 1000 < Math.floor(admin.updatedAt.getTime() / 1000) * 1000) {
-      throw Errors.unauthorized({ reason: 'admin_refresh_revoked', code: 'TOKEN_REUSE_DETECTED' });
+    if (decoded.ep !== admin.tokenEpoch) {
+      throw Errors.unauthorized({ reason: 'admin_refresh_revoked' });
     }
     const accessToken = signAdminAccessToken({
       sub: admin.id,

@@ -455,8 +455,18 @@ model Admin {
   passwordHash      String    @map("password_hash") @db.VarChar(100)
   name              String    @db.VarChar(100)
   role              String    @default("admin") @db.VarChar(20)
+  // Legacy plaintext secret — migrated lazily into totp_secret_enc on the next
+  // successful TOTP login, then nulled. New secrets never land here.
   totpSecret        String?   @map("totp_secret") @db.VarChar(200)
+  // H2: AES-256-GCM encrypted (lib/secretBox, key TOTP_ENC_KEY).
+  totpSecretEnc     String?   @map("totp_secret_enc") @db.VarChar(300)
+  totpPendingEnc    String?   @map("totp_pending_enc") @db.VarChar(300)
+  // Last accepted 30s time-step — a code is accepted once (replay guard).
+  totpLastStep      Int?      @map("totp_last_step")
   totpEnabled       Boolean   @default(false) @map("totp_enabled")
+  // M6: bumped on logout / password change / TOTP change; admin refresh JWTs
+  // carry it and are rejected when stale.
+  tokenEpoch        Int       @default(0) @map("token_epoch")
   mustChangePassword Boolean  @default(false) @map("must_change_password")
   lastLoginAt       DateTime? @map("last_login_at") @db.Timestamptz(6)
   isActive          Boolean   @default(true) @map("is_active")

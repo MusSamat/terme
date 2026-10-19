@@ -29,6 +29,7 @@ export interface AdminRefreshTokenPayload {
   sub: string;
   email: string;
   role: 'admin' | 'superadmin';
+  ep: number;        // admins.token_epoch at issue time (M6)
   kind: 'admin_refresh';
 }
 
@@ -158,4 +159,9 @@ export function verifyAdminRefreshToken(token: string): DecodedAdminRefresh {
  */
 export function refreshTtlSeconds(): number {
   return env.JWT_REFRESH_INACTIVITY_DAYS * 24 * 60 * 60;
+}
+
+/** M6: admin refresh tokens are short-lived (ADMIN_REFRESH_TTL_HOURS). */
+export function adminRefreshTtlSeconds(): number {
+  return env.ADMIN_REFRESH_TTL_HOURS * 60 * 60;
 }

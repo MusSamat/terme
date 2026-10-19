@@ -33,6 +33,9 @@ export interface AdminAuthResult {
     name: string;
     role: 'admin' | 'superadmin';
     mustChangePassword: boolean;
+    totpEnabled: boolean;
+    /** ADMIN_TOTP_REQUIRED and not enrolled yet → UI must run TOTP setup. */
+    totpEnrollmentRequired: boolean;
   };
 }
 
@@ -71,7 +74,20 @@ export interface AuthService {
   refresh(token: string, deviceInfo: string | undefined, ip: string | null): Promise<TokenPair>;
   logout(token: string): Promise<void>;
   logoutAll(userId: string): Promise<void>;
-  adminLogin(email: string, plainPassword: string, totp?: string): Promise<AdminAuthResult>;
+  adminLogin(
+    email: string,
+    plainPassword: string,
+    totp: string | undefined,
+    ip: string,
+  ): Promise<AdminAuthResult>;
   adminRefresh(token: string): Promise<AdminRefreshResult>;
   adminChangePassword(adminId: string, currentPassword: string, newPassword: string): Promise<void>;
+  adminLogout(token: string): Promise<void>;
+  adminTotpSetup(adminId: string): Promise<{ secret: string; otpauthUri: string }>;
+  adminTotpConfirm(adminId: string, code: string): Promise<AdminAuthResult>;
+  adminTotpDisable(
+    actor: { id: string; role: 'admin' | 'superadmin' },
+    input: { adminId?: string; code?: string },
+    ip: string | null,
+  ): Promise<void>;
 }

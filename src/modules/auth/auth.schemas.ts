@@ -104,6 +104,24 @@ export const AdminChangePasswordBody = z.object({
   newPassword: z.string().min(12).max(200),
 });
 
+export const AdminTotpConfirmBody = z.object({
+  code: z.string().regex(/^\d{6}$/),
+  channel: z.enum(['mobile', 'web']).default('mobile'),
+});
+
+// Self-disable needs a current code; a superadmin passes adminId (no code).
+export const AdminTotpDisableBody = z
+  .object({
+    adminId: z.string().uuid().optional(),
+    code: z.string().regex(/^\d{6}$/).optional(),
+  })
+  .refine((b) => b.adminId || b.code, { message: 'adminId or code required' });
+
+export const AdminLogoutBody = z.object({
+  refreshToken: z.string().min(1).optional(),
+  channel: z.enum(['mobile', 'web']).default('mobile'),
+});
+
 export type AdminLoginInput = z.infer<typeof AdminLoginBody>;
 export type AdminRefreshInput = z.infer<typeof AdminRefreshBody>;
 export type StartPhoneChangeInput = z.infer<typeof StartPhoneChangeBody>;

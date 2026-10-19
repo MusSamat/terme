@@ -4,7 +4,10 @@ import { createAuthService } from './auth.service.js';
 import {
   AdminChangePasswordBody,
   AdminLoginBody,
+  AdminLogoutBody,
   AdminRefreshBody,
+  AdminTotpConfirmBody,
+  AdminTotpDisableBody,
   CheckPhoneBody,
   LogoutBody,
   PhoneLoginBody,
@@ -174,7 +177,7 @@ export function createAuthRouter(prisma: PrismaClient, notifier: Notifier): Rout
         password: string;
         totp?: string;
       };
-      res.status(200).json(await service.adminLogin(email, password, totp));
+      res.status(200).json(await service.adminLogin(email, password, totp, req.ip ?? '0.0.0.0'));
     }),
   );
 
@@ -193,13 +196,51 @@ export function createAuthRouter(prisma: PrismaClient, notifier: Notifier): Rout
     }),
   );
 
-  // Admin sign-out. Admin refresh tokens are stateless (revocable only en masse
-  // via the admin.updatedAt epoch), so sign-out = drop the HttpOnly cookie.
-  // Public on purpose: it must work with an expired access token.
-  router.post('/admin/logout', (req, res) => {
-    clearRefreshCookie(res, REFRESH_COOKIE.admin, req);
-    res.status(204).send();
-  });
+  // Admin sign-out. Public on purpose (works with an expired access token).
+  // With a valid admin refresh token (cookie or body) it bumps the admin's
+  // token epoch — every admin refresh token is revoked (M6); always drops the
+  // HttpOnly cookie.
+  router.post(
+    '/admin/logout',
+    validate({ body: AdminLogoutBody }),
+    asyncHandler(async (req, res) => {
+      const body = req.body as { refreshToken?: string };
+      const token = body.refreshToken ?? readCookie(req, REFRESH_COOKIE.admin);
+      if (token) await service.adminLogout(token);
+      clearRefreshCookie(res, REFRESH_COOKIE.admin, req);
+      res.status(204).send();
+    }),
+  );
+
+  // ─── Admin TOTP (H2) ───────────────────────────────────────────────
+  router.post(
+    '/admin/totp/setup',
+    requireAdmin,
+    asyncHandler(async (req, res) => {
+      res.status(200).json(await service.adminTotpSetup(req.admin!.id));
+    }),
+  );
+
+  router.post(
+    '/admin/totp/confirm',
+    requireAdmin,
+    validate({ body: AdminTotpConfirmBody }),
+    asyncHandler(async (req, res) => {
+      const { code } = req.body as { code: string };
+      res.status(200).json(await service.adminTotpConfirm(req.admin!.id, code));
+    }),
+  );
+
+  router.post(
+    '/admin/totp/disable',
+    requireAdmin,
+    validate({ body: AdminTotpDisableBody }),
+    asyncHandler(async (req, res) => {
+      const body = req.body as { adminId?: string; code?: string };
+      await service.adminTotpDisable(req.admin!, body, req.ip ?? null);
+      res.status(204).send();
+    }),
+  );
 
   router.post(
     '/admin/refresh',

@@ -736,11 +736,101 @@ export const openapiDocument = {
     '/auth/admin/logout': {
       post: {
         tags: ['Auth'],
-        summary: 'Admin sign-out: clears the HttpOnly admin refresh cookie',
+        summary: 'Admin sign-out: revokes admin refresh tokens and clears the cookie',
         description:
-          'Admin refresh tokens are stateless JWTs (no per-token store), so this '
-          + 'clears the terme_admin_rt cookie; the client must also drop its in-memory access token.',
+          'Public (works with an expired access token). With a valid admin refresh token '
+          + '(terme_admin_rt cookie or body.refreshToken) it bumps the admin token epoch, revoking '
+          + 'every admin refresh token of that admin; always clears the cookie. The client must also '
+          + 'drop its in-memory access token.',
+        security: [],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  refreshToken: { type: 'string' },
+                  channel: { type: 'string', enum: ['mobile', 'web'] },
+                },
+              },
+            },
+          },
+        },
         responses: { '204': { description: 'Signed out' }, ...errorResponses },
+      },
+    },
+    '/auth/admin/totp/setup': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Admin TOTP enrolment step 1: new secret (stored pending, encrypted)',
+        description:
+          'Reachable while ADMIN_TOTP_REQUIRED gating is active. 409 totp_already_enabled if enrolled.',
+        security: [{ BearerAuth: [] }],
+        responses: {
+          '200': {
+            description: 'Secret + otpauth:// URI for the authenticator app (render as QR)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { secret: { type: 'string' }, otpauthUri: { type: 'string' } },
+                },
+              },
+            },
+          },
+          ...errorResponses,
+        },
+      },
+    },
+    '/auth/admin/totp/confirm': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Admin TOTP enrolment step 2: verify a code → TOTP enabled',
+        description:
+          'Rotates the admin token epoch (other sessions end) and returns a fresh admin token pair '
+          + '(web: refresh token in the terme_admin_rt cookie). 400 totp_invalid on a wrong code.',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['code'],
+                properties: {
+                  code: { type: 'string', pattern: '^\\d{6}$' },
+                  channel: { type: 'string', enum: ['mobile', 'web'] },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'AdminAuthResult (same shape as login)' }, ...errorResponses },
+      },
+    },
+    '/auth/admin/totp/disable': {
+      post: {
+        tags: ['Auth'],
+        summary: 'Disable admin TOTP (self with a current code, or superadmin for another admin)',
+        description:
+          'Self: { code }. Superadmin: { adminId } (audited as disable_admin_totp). Bumps the target '
+          + 'admin token epoch — their refresh tokens are revoked.',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  adminId: { type: 'string', format: 'uuid' },
+                  code: { type: 'string', pattern: '^\\d{6}$' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '204': { description: 'TOTP disabled' }, ...errorResponses },
       },
     },
     '/auth/logout/all': {

@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  DEFAULT_SUPERADMIN_EMAIL,
+  DEFAULT_SUPERADMIN_TEMP_PASSWORD,
+  superadminTempPasswordProblem,
+} from './superadmin.js';
 
 // Load `.env` into process.env before Zod parses (Node ≥20.12 built-in).
 // In production a process manager (Docker / systemd) passes env directly, so
@@ -68,8 +73,26 @@ const EnvSchema = z.object({
   // is OTP_DAILY_CAP) — an attacker can't burn a victim's whole daily quota.
   OTP_PHONE_DAILY_CEILING: z.coerce.number().int().positive().default(15),
 
-  SUPERADMIN_EMAIL: z.string().email().default('superadmin@terme.kg'),
-  SUPERADMIN_TEMP_PASSWORD: z.string().min(8).default('change-on-first-login-please'),
+  // H2: AES-256-GCM key for admin TOTP secrets at rest — 32 bytes, base64.
+  // Required in production; dev/test derive a key from JWT_REFRESH_SECRET.
+  TOTP_ENC_KEY: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z
+      .string()
+      .refine((v) => Buffer.from(v, 'base64').length === 32, 'TOTP_ENC_KEY must be 32 bytes, base64')
+      .optional(),
+  ),
+  // H2: admins must enrol TOTP before using the panel. Unset → on in production.
+  ADMIN_TOTP_REQUIRED: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.enum(['true', 'false']).optional(),
+  ),
+  // M6: admin refresh token lifetime (stateless JWT + admins.token_epoch).
+  ADMIN_REFRESH_TTL_HOURS: z.coerce.number().int().positive().default(12),
+
+  SUPERADMIN_EMAIL: z.string().email().default(DEFAULT_SUPERADMIN_EMAIL),
+  // H3: production refuses to boot with it unset, default or <16 chars.
+  SUPERADMIN_TEMP_PASSWORD: z.string().min(8).default(DEFAULT_SUPERADMIN_TEMP_PASSWORD),
 
   FILES_DIR: z.string().default('./var/files'),
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(5),
@@ -105,7 +128,9 @@ const EnvSchema = z.object({
   PRESENCE_CACHE_MS: z.coerce.number().int().positive().default(10_000),
 });
 
-export type Env = z.infer<typeof EnvSchema>;
+export type Env = Omit<z.infer<typeof EnvSchema>, 'ADMIN_TOTP_REQUIRED'> & {
+  ADMIN_TOTP_REQUIRED: boolean;
+};
 
 function parseEnv(): Env {
   const parsed = EnvSchema.safeParse(process.env);
@@ -129,7 +154,24 @@ function parseEnv(): Env {
     );
     process.exit(1);
   }
-  return parsed.data;
+  const data = parsed.data;
+  if (data.NODE_ENV === 'production') {
+    const problems = [
+      !data.TOTP_ENC_KEY && 'TOTP_ENC_KEY (32 bytes, base64) is required',
+      superadminTempPasswordProblem(process.env.SUPERADMIN_TEMP_PASSWORD),
+    ].filter(Boolean);
+    if (problems.length) {
+      process.stderr.write(`\n✗ Unsafe production config:\n  • ${problems.join('\n  • ')}\n\n`);
+      process.exit(1);
+    }
+  }
+  return {
+    ...data,
+    ADMIN_TOTP_REQUIRED:
+      data.ADMIN_TOTP_REQUIRED === undefined
+        ? data.NODE_ENV === 'production'
+        : data.ADMIN_TOTP_REQUIRED === 'true',
+  };
 }
 
 export const env: Env = parseEnv();
