@@ -1,6 +1,31 @@
 import pino from 'pino';
 import { env, isDev, isTest } from '@/config/env.js';
 
+export const redactOptions = {
+  paths: [
+    'req.headers.authorization',
+    'req.headers.cookie',
+    '*.password',
+    '*.passwordHash',
+    '*.tokenHash',
+    '*.codeHash',
+    '*.totpSecret',
+    '*.initData',
+    '*.refreshToken',
+    '*.accessToken',
+    // OTP / TOTP codes in request bodies only — err.code (P2002 …) and
+    // AppError codes must stay visible.
+    'body.code',
+    '*.body.code',
+    'otp.code',
+    '*.newPassword',
+    '*.currentPassword',
+    '*.otp',
+    '*.totp',
+  ],
+  censor: '[REDACTED]',
+};
+
 export const logger = pino({
   level: isTest ? 'silent' : env.LOG_LEVEL,
   base: {
@@ -19,26 +44,7 @@ export const logger = pino({
         },
       }
     : {}),
-  redact: {
-    paths: [
-      'req.headers.authorization',
-      'req.headers.cookie',
-      '*.password',
-      '*.passwordHash',
-      '*.tokenHash',
-      '*.codeHash',
-      '*.totpSecret',
-      '*.initData',
-      '*.refreshToken',
-      '*.accessToken',
-      '*.code',
-      '*.newPassword',
-      '*.currentPassword',
-      '*.otp',
-      '*.totp',
-    ],
-    censor: '[REDACTED]',
-  },
+  redact: redactOptions,
 });
 
 export type Logger = typeof logger;
