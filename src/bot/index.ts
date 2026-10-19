@@ -20,6 +20,7 @@ import { createMyActions } from './my.actions.js';
 import { createSettings } from './settings.js';
 import { LEGACY_MENU, TEXTS, langOf, type Lang } from './texts.js';
 import { contactKeyboard, escapeHtml } from './format.js';
+import { createBotRateLimiter } from './rateLimit.js';
 
 /**
  * The Telegram bot is a full client: search, publish, book, passenger requests,
@@ -55,6 +56,9 @@ export async function registerBotHandlers(bot: Bot, deps: BotDeps): Promise<void
     if (ctx.chat && ctx.chat.type !== 'private') return;
     await next();
   });
+
+  // Flood guard: 30 messages / button presses per minute per Telegram user.
+  bot.use(createBotRateLimiter());
 
   // Last-resort guard: an unexpected failure still answers the user.
   bot.use(async (ctx, next) => {

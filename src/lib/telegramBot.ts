@@ -39,15 +39,15 @@ interface MessageTemplate {
 const T = {
   new_booking_request: {
     ru: '📬 <b>Новый запрос на поездку</b>\nОт: <b>{passengerName}</b>{ratingSuffix}\nПоездка: {from} → {to}\nДата: {date}\nМест: {seats}',
-    kg: '📬 <b>Сапарга жаңы арыз</b>\nКимден: <b>{passengerName}</b>{ratingSuffix}\nСапар: {from} → {to}\nДата: {date}\nОрундар: {seats}',
+    kg: '📬 <b>Сапарга жаңы өтүнмө</b>\nКимден: <b>{passengerName}</b>{ratingSuffix}\nСапар: {from} → {to}\nДата: {date}\nОрундар: {seats}',
   },
   booking_accepted: {
     ru: '✅ <b>{driverName}</b> принял ваш запрос! Чат открыт.',
-    kg: '✅ <b>{driverName}</b> арызыңызды кабыл алды! Чат ачылды.',
+    kg: '✅ <b>{driverName}</b> өтүнмөңүздү кабыл алды! Чат ачылды.',
   },
   booking_rejected: {
     ru: '❌ Водитель отклонил ваш запрос.',
-    kg: '❌ Айдоочу арызыңызды четке какты.',
+    kg: '❌ Айдоочу өтүнмөңүздү четке какты.',
   },
   booking_expired: {
     ru: '⏰ Водитель не ответил. Попробуйте другую поездку.',

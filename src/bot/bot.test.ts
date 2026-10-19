@@ -7,6 +7,8 @@ import { createBooking, createTrip, createUser, createVerifiedDriver } from '../
 import { createPassengerRequestsService } from '@/modules/passenger-requests/passenger-requests.service.js';
 import { registerBotHandlers } from './index.js';
 import { getSentMessages, clearSentMessages } from '@/lib/otpCapture.js';
+import { env } from '@/config/env.js';
+import { TEXTS } from './texts.js';
 
 // The bot runs against the real DB; Telegram API calls are captured instead of sent.
 interface Call {
@@ -377,5 +379,21 @@ describe('Telegram bot', () => {
       message: { message_id: 5, date: 0, chat: { id: -100, type: 'group', title: 'g' }, from, text: '/start' },
     } as Update);
     expect(sent()).toHaveLength(0);
+  });
+});
+
+describe('bot flood guard', () => {
+  it('drops updates past 30/min per user with one friendly notice', async () => {
+    env.RATE_LIMIT_DISABLED = false;
+    try {
+      for (let i = 0; i < 30; i += 1) await text('/help');
+      const before = sent().length;
+      await text('/help');
+      await text('/help');
+      const after = sent().slice(before);
+      expect(after).toEqual([TEXTS.ru.tooFast]);
+    } finally {
+      env.RATE_LIMIT_DISABLED = true;
+    }
   });
 });
