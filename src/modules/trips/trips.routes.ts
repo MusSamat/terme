@@ -9,6 +9,7 @@ import {
   MyTripsQuery,
   PriceSuggestionQuery,
   SeatsAdjustBody,
+  TripCancelBody,
   TripCalendarQuery,
   TripCreateBody,
   TripIdParam,
@@ -183,9 +184,9 @@ export function createTripsRouter(prisma: PrismaClient, notifier?: Notifier): Ro
   router.delete(
     '/:id',
     requireAuth,
-    validate({ params: TripIdParam }),
+    validate({ params: TripIdParam, body: TripCancelBody }),
     asyncHandler(async (req, res) => {
-      const reason = typeof req.body?.reason === 'string' ? (req.body.reason as string) : undefined;
+      const { reason } = req.body as { reason?: string };
       const result = await service.cancel(req.params.id!, req.user!.id, reason);
       res.json(result);
     }),

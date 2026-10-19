@@ -476,3 +476,83 @@ describe('POST /v1/bookings — Idempotency-Key (replay, not 409)', () => {
     expect(other.body.error.details.reason).toBe('idempotency_key_mismatch');
   });
 });
+
+describe('Booking race / filter regressions', () => {
+  it('concurrent retries with one Idempotency-Key → one booking, the loser replays it', async () => {
+    const d = await createVerifiedDriver(testPrisma, { plate: 'IDK3' });
+    const trip = await createActiveTrip({ driverId: d.id, seatsTotal: 3, seatsAvailable: 3 });
+    const p = await createUser(testPrisma);
+    const send = () =>
+      request(app)
+        .post('/v1/bookings')
+        .set('Authorization', `Bearer ${p.accessToken}`)
+        .set('Idempotency-Key', 'race-key-1')
+        .send({ tripId: trip.id, seatsCount: 1 });
+
+    const [a, b] = await Promise.all([send(), send()]);
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    expect(a.body.id).toBe(b.body.id);
+    expect(await testPrisma.booking.count({ where: { tripId: trip.id } })).toBe(1);
+  });
+
+  it('rejects an Idempotency-Key longer than the column (400, not 500)', async () => {
+    const d = await createVerifiedDriver(testPrisma, { plate: 'IDK4' });
+    const trip = await createActiveTrip({ driverId: d.id });
+    const p = await createUser(testPrisma);
+    const res = await request(app)
+      .post('/v1/bookings')
+      .set('Authorization', `Bearer ${p.accessToken}`)
+      .set('Idempotency-Key', 'k'.repeat(101))
+      .send({ tripId: trip.id, seatsCount: 1 });
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /bookings/my?status=cancelled returns every cancellation flavour; pending includes viewed', async () => {
+    const d = await createVerifiedDriver(testPrisma, { plate: 'FLT1' });
+    const p = await createUser(testPrisma);
+    const statuses = ['cancelled_by_passenger', 'cancelled_by_driver', 'cancelled_late', 'viewed'];
+    for (const [i, status] of statuses.entries()) {
+      // One trip per day — the route-day unique index forbids two on one day.
+      const trip = await createActiveTrip({
+        driverId: d.id,
+        when: new Date(Date.now() + (i + 1) * 24 * 60 * 60_000),
+      });
+      await testPrisma.booking.create({
+        data: { tripId: trip.id, passengerId: p.id, seatsCount: 1, status },
+      });
+    }
+    const cancelled = await request(app)
+      .get('/v1/bookings/my?status=cancelled')
+      .set('Authorization', `Bearer ${p.accessToken}`);
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body.data).toHaveLength(3);
+
+    const pending = await request(app)
+      .get('/v1/bookings/my?status=pending')
+      .set('Authorization', `Bearer ${p.accessToken}`);
+    expect(pending.body.data.map((b: { status: string }) => b.status)).toEqual(['viewed']);
+  });
+
+  it('reject loses to a committed accept (409, seats stay taken)', async () => {
+    const d = await createVerifiedDriver(testPrisma, { plate: 'RJ1' });
+    const trip = await createActiveTrip({ driverId: d.id, seatsTotal: 3, seatsAvailable: 3 });
+    const p = await createUser(testPrisma);
+    const bk = await testPrisma.booking.create({
+      data: { tripId: trip.id, passengerId: p.id, seatsCount: 1, status: 'pending' },
+    });
+    const [acc, rej] = await Promise.all([
+      request(app).patch(`/v1/bookings/${bk.id}/accept`).set('Authorization', `Bearer ${d.accessToken}`),
+      request(app).patch(`/v1/bookings/${bk.id}/reject`).set('Authorization', `Bearer ${d.accessToken}`).send({}),
+    ]);
+    const row = await testPrisma.booking.findUniqueOrThrow({ where: { id: bk.id } });
+    const t = await testPrisma.trip.findUniqueOrThrow({ where: { id: trip.id } });
+    if (acc.status === 200) {
+      expect(rej.status).toBe(409);
+      expect(row.status).toBe('accepted');
+      expect(t.seatsAvailable).toBe(2);
+    } else {
+      expect(row.status).toBe('rejected');
+      expect(t.seatsAvailable).toBe(3);
+    }
+  });
+});

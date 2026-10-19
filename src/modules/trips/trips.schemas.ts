@@ -144,6 +144,11 @@ export const SeatsAdjustBody = z.object({
 });
 export type SeatsAdjustInput = z.infer<typeof SeatsAdjustBody>;
 
+// DELETE /trips/:id — optional free-text reason shown to booked passengers.
+export const TripCancelBody = z.object({
+  reason: z.string().trim().max(500).optional(),
+});
+
 export const MyTripsQuery = z.object({
   tab: z.enum(['active', 'in_transit', 'past', 'cancelled']).default('active'),
   cursor: z.string().uuid().optional(),

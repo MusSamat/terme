@@ -6,6 +6,11 @@ export const BookingCreateBody = z.object({
   comment: z.string().trim().max(300).optional(),
 });
 
+// Optional for bookings (mobile doesn't send it yet); bounded to the column size.
+export const BookingIdempotencyHeader = z.object({
+  'idempotency-key': z.string().min(1).max(100).optional(),
+});
+
 export type BookingCreateInput = z.infer<typeof BookingCreateBody>;
 
 export const BookingCancelBody = z

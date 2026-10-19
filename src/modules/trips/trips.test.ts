@@ -114,6 +114,21 @@ describe('POST /v1/trips', () => {
     expect(count).toBe(1);
   });
 
+  it('concurrent requests with one Idempotency-Key → one trip, the loser replays it (not duplicate_route_day)', async () => {
+    const d = await createVerifiedDriver(testPrisma, { plate: 'C1R' });
+    const key = idempotencyKey();
+    const send = () =>
+      request(app)
+        .post('/v1/trips')
+        .set('Authorization', `Bearer ${d.accessToken}`)
+        .set('Idempotency-Key', key)
+        .send(tripPayload());
+    const [a, b] = await Promise.all([send(), send()]);
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+    expect(a.body.id).toBe(b.body.id);
+    expect(await testPrisma.trip.count({ where: { driverId: d.id } })).toBe(1);
+  });
+
   it('rejects another user reusing an Idempotency-Key', async () => {
     const d1 = await createVerifiedDriver(testPrisma, { plate: 'D1' });
     const d2 = await createVerifiedDriver(testPrisma, { plate: 'D2' });

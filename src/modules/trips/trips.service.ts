@@ -363,6 +363,15 @@ export function createTripsService(
       });
       return { trip: await getById(created.id, driverUserId), reused: false };
     } catch (err) {
+      // Two concurrent requests with the same Idempotency-Key both pass the
+      // lookup above; the loser hits a unique violation. Replay the winner's
+      // trip instead of misreporting it as a duplicate route-day.
+      if ((err as { code?: string }).code === 'P2002') {
+        const winner = await prisma.trip.findUnique({ where: { idempotencyKey } });
+        if (winner?.driverId === driverUserId) {
+          return { trip: await getById(winner.id, driverUserId), reused: true };
+        }
+      }
       throw mapPrismaError(err);
     }
   }
@@ -665,7 +674,7 @@ export function createTripsService(
     }
 
     await prisma.trip.update({ where: { id }, data });
-    return getById(id);
+    return getById(id, driverUserId);
   }
 
   // ─── Manual seats adjust («занято по телефону» / «освободилось») ─────
@@ -711,7 +720,7 @@ export function createTripsService(
         data: { seatsAvailable: next, version: { increment: 1 } },
       });
     });
-    return getById(id);
+    return getById(id, driverUserId);
   }
 
   // ─── Cancel ─────────────────────────────────────────────────────────
@@ -729,14 +738,18 @@ export function createTripsService(
     }
 
     const affected = await prisma.$transaction(async (tx) => {
-      await tx.trip.update({
-        where: { id },
+      // Conditional flip: a concurrent complete()/auto_complete cron or a second
+      // cancel may have closed the trip since the read above — never overwrite
+      // a completed trip or double-count the cancellation.
+      const { count } = await tx.trip.updateMany({
+        where: { id, status: { in: ['active', 'direct'] } },
         data: {
           status: 'cancelled',
           cancelledReason: reason ?? null,
           version: { increment: 1 },
         },
       });
+      if (count !== 1) throw Errors.conflict('Trip is not active', { reason: 'trip_state_changed' });
       // TZ §16.1 "Водитель отменяет поездку: все bookings → cancelled_by_driver,
       //   уведомления всем, cancellations_30d++."
       // Every live booking — 'viewed' is still a live request.

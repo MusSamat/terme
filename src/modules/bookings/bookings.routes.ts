@@ -4,6 +4,7 @@ import { createBookingsService } from './bookings.service.js';
 import {
   BookingCancelBody,
   BookingCreateBody,
+  BookingIdempotencyHeader,
   BookingIdParam,
   BookingRejectBody,
   IncomingBookingsQuery,
@@ -23,7 +24,7 @@ export function createBookingsRouter(prisma: PrismaClient, notifier: Notifier): 
     '/',
     requireAuth,
     bookingCreateLimit,
-    validate({ body: BookingCreateBody }),
+    validate({ body: BookingCreateBody, headers: BookingIdempotencyHeader }),
     asyncHandler(async (req, res) => {
       const idempotencyKey = req.header('idempotency-key') ?? undefined;
       const { booking, reused } = await service.create(
