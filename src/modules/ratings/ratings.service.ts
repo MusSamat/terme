@@ -370,7 +370,9 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
     // average. The bookings service accumulates it (users.ratingPenalty) instead
     // of writing users.rating directly, so recalcAverage must subtract it rather
     // than overwrite and erase it.
-    const [rows, ratee] = await Promise.all([
+    // ratingCount is the TOTAL number of ratings; only the average uses the
+    // rolling RATING_SAMPLE window (it used to cap the public count at 50).
+    const [rows, ratee, total] = await Promise.all([
       prisma.rating.findMany({
         where: { rateeId: userId },
         orderBy: { createdAt: 'desc' },
@@ -381,6 +383,7 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
         where: { id: userId },
         select: { ratingPenalty: true },
       }),
+      prisma.rating.count({ where: { rateeId: userId } }),
     ]);
     const penalty = ratee.ratingPenalty.toNumber();
 
@@ -392,9 +395,9 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
       // average becomes visible.
       await prisma.user.update({
         where: { id: userId },
-        data: { ratingCount: rows.length },
+        data: { ratingCount: total },
       });
-      return { average: null, count: rows.length };
+      return { average: null, count: total };
     }
     const avg = rows.reduce((s, r) => s + r.score, 0) / rows.length;
     // newRating = average(recent scores) − ratingPenalty, clamped to [1.0, 5.0].
@@ -405,9 +408,9 @@ export function createRatingsService(prisma: PrismaClient, notifier: Notifier): 
       where: { id: userId },
       data: {
         rating: new Prisma.Decimal(rounded),
-        ratingCount: rows.length,
+        ratingCount: total,
       },
     });
-    return { average: rounded, count: rows.length };
+    return { average: rounded, count: total };
   }
 }

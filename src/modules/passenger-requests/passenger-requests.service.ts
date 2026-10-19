@@ -275,6 +275,8 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
     const whereFor = (fromIds: number[] | null, toIds: number[] | null): Prisma.PassengerRequestWhereInput => ({
       status: 'open',
       departureDate: { gte: now },
+      // Blocked or soft-deleted passengers' requests never surface (mirrors trips).
+      passenger: { isBlocked: false, deletedAt: null },
       ...(fromIds ? { originCityId: { in: fromIds } } : {}),
       ...(toIds ? { destinationCityId: { in: toIds } } : {}),
       // Single Asia/Bishkek day, floored at "now".
@@ -402,10 +404,13 @@ export function createPassengerRequestsService(prisma: PrismaClient) {
     if (req.passengerId !== passengerId) throw Errors.forbidden();
     if (req.status !== 'open') throw Errors.conflict('Request is not open');
 
-    await prisma.passengerRequest.update({
-      where: { id },
+    // Conditional: a concurrent acceptResponse() may have closed it (trip and
+    // booking already created) — don't relabel that as cancelled.
+    const { count } = await prisma.passengerRequest.updateMany({
+      where: { id, status: 'open' },
       data: { status: 'cancelled' },
     });
+    if (count !== 1) throw Errors.conflict('Request is not open');
   }
 
   async function update(
@@ -676,17 +681,6 @@ export function createPassengerRequestResponsesService(prisma: PrismaClient, not
 
   async function acceptResponse(passengerId: string, requestId: string, responseId: string): Promise<{ bookingId: string }> {
     const result = await prisma.$transaction(async (tx) => {
-      const response = await tx.passengerRequestResponse.findUnique({ where: { id: responseId } });
-      if (!response || response.requestId !== requestId) throw Errors.notFound('Response');
-      if (response.status !== 'pending') throw Errors.conflict('Response not pending', { current_status: response.status });
-      if (response.expiresAt < new Date()) throw Errors.conflict('Response expired');
-      // A response can be accepted up to the 47th hour of its TTL — reject if the
-      // agreed departure time has already passed (the created trip would be born
-      // un-completable / already-departed).
-      if (response.departureTime.getTime() <= Date.now()) {
-        throw Errors.conflict('Departure time already passed', { reason: 'departure_in_past' });
-      }
-
       // Lock the passenger_request row FOR UPDATE so two parallel accepts
       // (two tabs / double-tap on different responses) cannot both observe
       // status='open' and each create a trip + accepted booking. The second
@@ -706,6 +700,19 @@ export function createPassengerRequestResponsesService(prisma: PrismaClient, not
       if (!request) throw Errors.notFound('PassengerRequest');
       if (request.passenger_id !== passengerId) throw Errors.forbidden();
       if (request.status !== 'open') throw Errors.conflict('Request already closed');
+
+      // Read the response only AFTER the request lock, so a decline / re-offer
+      // that committed while we waited is seen (not overwritten to accepted).
+      const response = await tx.passengerRequestResponse.findUnique({ where: { id: responseId } });
+      if (!response || response.requestId !== requestId) throw Errors.notFound('Response');
+      if (response.status !== 'pending') throw Errors.conflict('Response not pending', { current_status: response.status });
+      if (response.expiresAt < new Date()) throw Errors.conflict('Response expired');
+      // A response can be accepted up to the 47th hour of its TTL — reject if the
+      // agreed departure time has already passed (the created trip would be born
+      // un-completable / already-departed).
+      if (response.departureTime.getTime() <= Date.now()) {
+        throw Errors.conflict('Departure time already passed', { reason: 'departure_in_past' });
+      }
       const full = await tx.passengerRequest.findUniqueOrThrow({
         where: { id: requestId },
         include: requestInclude,
@@ -809,10 +816,11 @@ export function createPassengerRequestResponsesService(prisma: PrismaClient, not
     if (!request) throw Errors.notFound('PassengerRequest');
     if (request.passengerId !== passengerId) throw Errors.forbidden();
 
-    await prisma.passengerRequestResponse.update({
-      where: { id: responseId },
+    const { count } = await prisma.passengerRequestResponse.updateMany({
+      where: { id: responseId, status: 'pending' },
       data: { status: 'declined' },
     });
+    if (count !== 1) throw Errors.conflict('Response not pending');
 
     await notifier.requestResponseDeclined(response.driverId, { responseId, requestId });
   }

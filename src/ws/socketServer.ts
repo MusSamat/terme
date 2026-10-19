@@ -1,5 +1,6 @@
 import type { Server as HttpServer } from 'node:http';
 import { Server as IoServer, type Socket } from 'socket.io';
+import { z } from 'zod';
 import type { PrismaClient } from '@prisma/client';
 import { verifyAccessToken, verifyAdminAccessToken } from '@/lib/jwt.js';
 import { isAllowedOrigin } from '@/lib/cors.js';
@@ -7,6 +8,14 @@ import { logger } from '@/lib/logger.js';
 import { createChatService } from '@/modules/chat/chat.service.js';
 import { createBookingsService } from '@/modules/bookings/bookings.service.js';
 import type { Notifier } from '@/lib/notifier.js';
+import { SendMessageBody } from '@/modules/chat/chat.schemas.js';
+
+// Socket payloads are untrusted input — same Zod rules as the REST twins.
+const BookingRef = z.object({ booking_id: z.string().uuid() });
+const ChatSendPayload = BookingRef.extend({
+  text: SendMessageBody.shape.text,
+  client_msg_id: SendMessageBody.shape.clientMsgId,
+});
 
 /**
  * Socket.IO server — mounted on the same HTTP server as REST in the MVP
@@ -144,7 +153,13 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
     };
 
     // ─── chat:join ───────────────────────────────────────────────────
-    socket.on('chat:join', async ({ booking_id }: { booking_id: string }) => {
+    socket.on('chat:join', async (raw: unknown) => {
+      const parsed = BookingRef.safeParse(raw);
+      if (!parsed.success) {
+        socket.emit('chat:error', { code: 'VALIDATION_ERROR' });
+        return;
+      }
+      const { booking_id } = parsed.data;
       try {
         const parts = await chat.participants(booking_id);
         if (!parts) {
@@ -171,11 +186,17 @@ export function attachChatNamespace(io: IoServer, prisma: PrismaClient, notifier
     // ─── chat:send ───────────────────────────────────────────────────
     socket.on(
       'chat:send',
-      async (payload: { booking_id: string; text: string; client_msg_id?: string }) => {
+      async (raw: unknown) => {
         if (!canSend()) {
           socket.emit('chat:error', { code: 'RATE_LIMITED' });
           return;
         }
+        const parsed = ChatSendPayload.safeParse(raw);
+        if (!parsed.success) {
+          socket.emit('chat:error', { code: 'VALIDATION_ERROR' });
+          return;
+        }
+        const payload = parsed.data;
         try {
           const { message } = await chat.send(
             payload.booking_id,

@@ -17,9 +17,13 @@ export const autoCompleteTripsJob: Job = {
   async run(prisma, notifier) {
     // INTERVAL '2 hours' added to estimated_duration (minutes). Postgres needs
     // explicit interval math; we compose it from the column.
-    const closed = await prisma.$queryRaw<
-      Array<{ id: string; driver_id: string; origin_city: string; destination_city: string }>
-    >`
+    // Closing the trips and flipping their accepted bookings to completed is one
+    // transaction: a crash in between used to leave completed trips whose
+    // passengers stayed 'accepted' forever (never ratable, never awarded).
+    const closed = await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<
+        Array<{ id: string; driver_id: string; origin_city: string; destination_city: string }>
+      >`
       UPDATE trips
       SET status = 'completed',
           completed_at = NOW(),
@@ -30,6 +34,14 @@ export const autoCompleteTripsJob: Job = {
             + INTERVAL '2 hours' < NOW()
       RETURNING id, driver_id, origin_city, destination_city
     `;
+      if (rows.length > 0) {
+        await tx.booking.updateMany({
+          where: { tripId: { in: rows.map((c) => c.id) }, status: 'accepted' },
+          data: { status: 'completed' },
+        });
+      }
+      return rows;
+    });
     if (closed.length === 0) return;
 
     // Rating-request notifications (TZ §15.2 trip_completed_rate). With a
@@ -48,7 +60,7 @@ export const autoCompleteTripsJob: Job = {
           SELECT t.driver_id AS user_id
           UNION
           SELECT b.passenger_id AS user_id FROM bookings b
-            WHERE b.trip_id = t.id AND b.status = 'accepted'
+            WHERE b.trip_id = t.id AND b.status = 'completed'
         ) u ON TRUE
         WHERE t.id = ANY(${closed.map((c) => c.id)}::uuid[])
       `;
@@ -58,7 +70,7 @@ export const autoCompleteTripsJob: Job = {
           SELECT ${trip.driver_id}::uuid AS user_id
           UNION
           SELECT passenger_id AS user_id FROM bookings
-            WHERE trip_id = ${trip.id}::uuid AND status = 'accepted'
+            WHERE trip_id = ${trip.id}::uuid AND status = 'completed'
         `;
         const payload = {
           trip_id: trip.id,
@@ -74,12 +86,6 @@ export const autoCompleteTripsJob: Job = {
         }
       }
     }
-
-    // Flip all still-accepted bookings to completed so passengers can rate.
-    await prisma.booking.updateMany({
-      where: { tripId: { in: closed.map((c) => c.id) }, status: 'accepted' },
-      data: { status: 'completed' },
-    });
 
     // Award loyalty points (and bump driver totalTrips) for all participants.
     // Each trip's awards run in one transaction so a crash can't half-apply.

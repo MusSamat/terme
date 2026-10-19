@@ -713,3 +713,14 @@ describe('POST decline response', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('GET /v1/passenger-requests — blocked owners', () => {
+  it("hides a blocked passenger's open requests from the public feed", async () => {
+    const p = await createUser(testPrisma);
+    expect((await createRequest(p)).status).toBe(201);
+    await testPrisma.user.update({ where: { id: p.id }, data: { isBlocked: true } });
+    const res = await request(app).get('/v1/passenger-requests');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(0);
+  });
+});
