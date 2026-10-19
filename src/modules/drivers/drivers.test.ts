@@ -219,6 +219,8 @@ describe('GET /v1/drivers/me/stats', () => {
       .get('/v1/drivers/me/stats')
       .set('Authorization', `Bearer ${u.accessToken}`);
     expect(res.status).toBe(403);
+    // The caller's own roles are not echoed back.
+    expect(res.body.error.details.actual).toBeUndefined();
   });
 
   it('returns totals for verified driver', async () => {

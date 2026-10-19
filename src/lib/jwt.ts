@@ -53,6 +53,24 @@ export interface DecodedAdminRefresh extends AdminRefreshTokenPayload {
   exp: number;
 }
 
+// LOW: issuer / audience pin every token to this API and its kind. Access and
+// admin-access tokens MUST carry them (a pre-change token gets TOKEN_EXPIRED so
+// clients simply refresh); refresh tokens are long-lived, so a missing claim is
+// accepted there for back-compat (a wrong one never is).
+export const JWT_ISSUER = 'terme-api';
+export const JWT_AUDIENCE = {
+  access: 'terme',
+  admin_access: 'terme-admin',
+  refresh: 'terme-refresh',
+  admin_refresh: 'terme-admin-refresh',
+} as const;
+type TokenKind = keyof typeof JWT_AUDIENCE;
+
+const claims = (kind: TokenKind): Pick<jwt.SignOptions, 'issuer' | 'audience'> => ({
+  issuer: JWT_ISSUER,
+  audience: JWT_AUDIENCE[kind],
+});
+
 const ACCESS_TTL = (): jwt.SignOptions['expiresIn'] =>
   `${env.JWT_ACCESS_TTL_MIN}m` as jwt.SignOptions['expiresIn'];
 
@@ -61,6 +79,7 @@ export function signAccessToken(payload: Omit<AccessTokenPayload, 'kind'>): stri
   return jwt.sign({ ...payload, kind: 'access' }, env.JWT_ACCESS_SECRET, {
     algorithm: 'HS256',
     expiresIn: ACCESS_TTL(),
+    ...claims('access'),
   });
 }
 
@@ -71,6 +90,7 @@ export function signRefreshToken(
   return jwt.sign({ ...payload, kind: 'refresh' }, env.JWT_REFRESH_SECRET, {
     algorithm: 'HS256',
     expiresIn: ttlSeconds,
+    ...claims('refresh'),
   });
 }
 
@@ -78,6 +98,7 @@ export function signAdminAccessToken(payload: Omit<AdminAccessTokenPayload, 'kin
   return jwt.sign({ ...payload, kind: 'admin_access' }, env.JWT_ACCESS_SECRET, {
     algorithm: 'HS256',
     expiresIn: ACCESS_TTL(),
+    ...claims('admin_access'),
   });
 }
 
@@ -88,6 +109,7 @@ export function signAdminRefreshToken(
   return jwt.sign({ ...payload, kind: 'admin_refresh' }, env.JWT_REFRESH_SECRET, {
     algorithm: 'HS256',
     expiresIn: ttlSeconds,
+    ...claims('admin_refresh'),
   });
 }
 
@@ -98,56 +120,42 @@ function mapJwtError(err: unknown): AppError {
   return Errors.unauthorized();
 }
 
-export function verifyAccessToken(token: string): DecodedAccess {
+function verifyKind(token: string, secret: string, kind: TokenKind, claimsRequired: boolean): jwt.JwtPayload {
   try {
-    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET, { algorithms: ['HS256'] });
-    if (typeof decoded === 'string' || decoded.kind !== 'access') {
+    const decoded = jwt.verify(token, secret, { algorithms: ['HS256'] });
+    if (typeof decoded === 'string' || decoded.kind !== kind) {
       throw Errors.unauthorized({ reason: 'wrong_token_kind' });
     }
-    return decoded as DecodedAccess;
+    if (decoded.iss === undefined && decoded.aud === undefined) {
+      // Minted before iss/aud existed: short-lived kinds → refresh; long-lived
+      // refresh tokens are accepted until they rotate.
+      if (claimsRequired) throw Errors.tokenExpired();
+      return decoded;
+    }
+    if (decoded.iss !== JWT_ISSUER || decoded.aud !== JWT_AUDIENCE[kind]) {
+      throw Errors.unauthorized({ reason: 'invalid_token' });
+    }
+    return decoded;
   } catch (err) {
     if (err instanceof AppError) throw err;
     throw mapJwtError(err);
   }
+}
+
+export function verifyAccessToken(token: string): DecodedAccess {
+  return verifyKind(token, env.JWT_ACCESS_SECRET, 'access', true) as DecodedAccess;
 }
 
 export function verifyRefreshToken(token: string): DecodedRefresh {
-  try {
-    const decoded = jwt.verify(token, env.JWT_REFRESH_SECRET, { algorithms: ['HS256'] });
-    if (typeof decoded === 'string' || decoded.kind !== 'refresh') {
-      throw Errors.unauthorized({ reason: 'wrong_token_kind' });
-    }
-    return decoded as DecodedRefresh;
-  } catch (err) {
-    if (err instanceof AppError) throw err;
-    throw mapJwtError(err);
-  }
+  return verifyKind(token, env.JWT_REFRESH_SECRET, 'refresh', false) as DecodedRefresh;
 }
 
 export function verifyAdminAccessToken(token: string): DecodedAdminAccess {
-  try {
-    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET, { algorithms: ['HS256'] });
-    if (typeof decoded === 'string' || decoded.kind !== 'admin_access') {
-      throw Errors.unauthorized({ reason: 'wrong_token_kind' });
-    }
-    return decoded as DecodedAdminAccess;
-  } catch (err) {
-    if (err instanceof AppError) throw err;
-    throw mapJwtError(err);
-  }
+  return verifyKind(token, env.JWT_ACCESS_SECRET, 'admin_access', true) as DecodedAdminAccess;
 }
 
 export function verifyAdminRefreshToken(token: string): DecodedAdminRefresh {
-  try {
-    const decoded = jwt.verify(token, env.JWT_REFRESH_SECRET, { algorithms: ['HS256'] });
-    if (typeof decoded === 'string' || decoded.kind !== 'admin_refresh') {
-      throw Errors.unauthorized({ reason: 'wrong_token_kind' });
-    }
-    return decoded as DecodedAdminRefresh;
-  } catch (err) {
-    if (err instanceof AppError) throw err;
-    throw mapJwtError(err);
-  }
+  return verifyKind(token, env.JWT_REFRESH_SECRET, 'admin_refresh', false) as DecodedAdminRefresh;
 }
 
 /**

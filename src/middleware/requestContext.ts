@@ -31,7 +31,8 @@ export const requestContext: RequestHandler = (req, res, next) => {
         request_id: requestId,
         user_id: req.user?.id ?? req.admin?.id,
         method: req.method,
-        path: req.originalUrl,
+        // Path only — query strings can carry secrets (hub.verify_token, sig).
+        path: req.originalUrl.split('?')[0],
         status: res.statusCode,
         duration_ms: Number(durationMs.toFixed(1)),
         locale: req.locale,

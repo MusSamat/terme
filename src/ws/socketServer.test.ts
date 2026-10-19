@@ -18,8 +18,9 @@ import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { env } from '@/config/env.js';
 import { createChatService } from '@/modules/chat/chat.service.js';
+import { JWT_AUDIENCE, JWT_ISSUER } from '@/lib/jwt.js';
 
-const ACCESS_CLAIMS = {};
+const ACCESS_CLAIMS = { issuer: JWT_ISSUER, audience: JWT_AUDIENCE.access };
 
 let server: http.Server;
 let io: IoServer;

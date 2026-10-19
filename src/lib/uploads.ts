@@ -3,7 +3,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import multer, { type FileFilterCallback } from 'multer';
 import type { Request, RequestHandler } from 'express';
-import { env } from '@/config/env.js';
+import { env, isTest } from '@/config/env.js';
+import { logger } from '@/lib/logger.js';
 import { Errors } from '@/lib/errors.js';
 
 /**
@@ -208,9 +209,14 @@ function isPrivate(relPath: string): boolean {
   return PRIVATE_DIRS.has(relPath.split('/')[0] ?? '');
 }
 
+if (!env.FILES_SIGNING_SECRET && !isTest) {
+  logger.warn('FILES_SIGNING_SECRET unset — signing private file URLs with JWT_ACCESS_SECRET');
+}
+const filesSigningSecret = env.FILES_SIGNING_SECRET ?? env.JWT_ACCESS_SECRET;
+
 function fileSignature(relPath: string, exp: number): string {
   return crypto
-    .createHmac('sha256', env.JWT_ACCESS_SECRET)
+    .createHmac('sha256', filesSigningSecret)
     .update(`file:${relPath}:${exp}`)
     .digest('base64url');
 }

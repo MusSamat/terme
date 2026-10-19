@@ -116,7 +116,8 @@ export function requireRole(...roles: Role[]): RequestHandler {
   return (req, _res, next) => {
     if (!req.user) return next(Errors.unauthorized());
     const hasRole = roles.some((r) => req.user!.roles.includes(r));
-    if (!hasRole) return next(Errors.forbidden({ required: roles, actual: req.user.roles }));
+    // Don't echo the caller's roles back (no account introspection).
+    if (!hasRole) return next(Errors.forbidden({ required: roles }));
     next();
   };
 }
@@ -125,7 +126,7 @@ export function requireAdminRole(...roles: Array<'admin' | 'superadmin'>): Reque
   return (req, _res, next) => {
     if (!req.admin) return next(Errors.unauthorized());
     if (!roles.includes(req.admin.role)) {
-      return next(Errors.forbidden({ required: roles, actual: [req.admin.role] }));
+      return next(Errors.forbidden({ required: roles }));
     }
     next();
   };

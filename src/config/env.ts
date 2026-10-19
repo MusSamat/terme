@@ -119,6 +119,13 @@ const EnvSchema = z.object({
   // H3: production refuses to boot with it unset, default or <16 chars.
   SUPERADMIN_TEMP_PASSWORD: z.string().min(8).default(DEFAULT_SUPERADMIN_TEMP_PASSWORD),
 
+  // HMAC key for signed private-file URLs. Unset → falls back to
+  // JWT_ACCESS_SECRET (with a startup warning); set a separate value.
+  FILES_SIGNING_SECRET: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().min(32, 'FILES_SIGNING_SECRET must be ≥32 chars').optional(),
+  ),
+
   FILES_DIR: z.string().default('./var/files'),
   MAX_UPLOAD_MB: z.coerce.number().int().positive().default(5),
 

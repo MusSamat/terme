@@ -49,7 +49,7 @@ export const globalErrorHandler: ErrorRequestHandler = (err, req, res, _next) =>
     user_id: req.user?.id ?? req.admin?.id,
     code: appError.code,
     status: appError.httpStatus,
-    path: req.originalUrl,
+    path: req.originalUrl.split('?')[0],
     method: req.method,
     stack: appError.httpStatus >= 500 ? (err instanceof Error ? err.stack : undefined) : undefined,
     details: appError.details,

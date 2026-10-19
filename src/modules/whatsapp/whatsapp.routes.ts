@@ -34,6 +34,13 @@ function verifySignature(req: Request): boolean {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+// Constant-time string compare (hash first so lengths always match).
+function safeEqual(a: string, b: string): boolean {
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
 export function createWhatsappRouter(prisma: PrismaClient): Router {
   const router = Router();
 
@@ -49,8 +56,9 @@ export function createWhatsappRouter(prisma: PrismaClient): Router {
       res.sendStatus(500);
       return;
     }
-    if (mode === 'subscribe' && token === env.WHATSAPP_VERIFY_TOKEN) {
-      res.status(200).send(String(challenge ?? ''));
+    if (mode === 'subscribe' && typeof token === 'string' && safeEqual(token, env.WHATSAPP_VERIFY_TOKEN)) {
+      // text/plain: the echoed challenge must never be rendered as HTML.
+      res.status(200).type('text/plain').send(String(challenge ?? ''));
       return;
     }
     res.sendStatus(403);
