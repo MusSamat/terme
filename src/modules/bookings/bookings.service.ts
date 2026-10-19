@@ -619,7 +619,7 @@ export function createBookingsService(prisma: PrismaClient, notifier: Notifier):
     query: IncomingBookingsInput,
   ): Promise<{ data: BookingDTO[]; nextCursor: string | null }> {
     const where: Prisma.BookingWhereInput = {
-      status: { in: ['pending', 'viewed'] },
+      status: { in: INCOMING_STATUS[query.status ?? 'pending'] },
       trip: { driverId: driverUserId },
       ...(query.tripId ? { tripId: query.tripId } : {}),
     };
@@ -688,6 +688,12 @@ const STATUS_FILTER: Record<NonNullable<MyBookingsInput['status']>, string[]> = 
   cancelled: ['cancelled_by_passenger', 'cancelled_by_driver', 'cancelled_late'],
   completed: ['completed'],
   expired: ['expired'],
+};
+
+const INCOMING_STATUS: Record<NonNullable<IncomingBookingsInput['status']>, string[]> = {
+  pending: ['pending', 'viewed'],
+  accepted: ['accepted'],
+  all: ['pending', 'viewed', 'accepted'],
 };
 
 // Single source of truth for the relations a BookingDTO needs. Shared by the

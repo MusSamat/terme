@@ -428,6 +428,16 @@ describe('GET /v1/bookings/my and /incoming', () => {
       .get('/v1/bookings/incoming')
       .set('Authorization', `Bearer ${d.accessToken}`);
     expect(after.body.data).toHaveLength(0);
+
+    // …but the driver panel can still list confirmed passengers.
+    const accepted = await request(app)
+      .get('/v1/bookings/incoming?status=accepted')
+      .set('Authorization', `Bearer ${d.accessToken}`);
+    expect(accepted.body.data.map((x: { id: string }) => x.id)).toEqual([b.body.id]);
+    const all = await request(app)
+      .get('/v1/bookings/incoming?status=all')
+      .set('Authorization', `Bearer ${d.accessToken}`);
+    expect(all.body.data).toHaveLength(1);
   });
 });
 

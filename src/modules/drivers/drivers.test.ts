@@ -128,6 +128,21 @@ describe('POST /v1/drivers/verification', () => {
     expect(res.status).toBe(400);
     expect(res.body.error.details.field).toBe('car_photo');
   });
+
+  it.each(['suspended', 'blocked'])(
+    'a %s driver cannot resubmit (403 VERIFICATION_LOCKED, status unchanged)',
+    async (status) => {
+      const u = await createUser(testPrisma);
+      expect((await submit(u.accessToken, { carPlate: `07KG${status.length}11AAA` })).status).toBe(201);
+      await testPrisma.driverProfile.update({ where: { userId: u.id }, data: { verificationStatus: status } });
+      const res = await submit(u.accessToken, { carPlate: `07KG${status.length}11AAA` });
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('VERIFICATION_LOCKED');
+      expect(res.body.error.message_kg).toBeTruthy();
+      const dp = await testPrisma.driverProfile.findUniqueOrThrow({ where: { userId: u.id } });
+      expect(dp.verificationStatus).toBe(status);
+    },
+  );
 });
 
 describe('GET /v1/drivers/verification/status', () => {

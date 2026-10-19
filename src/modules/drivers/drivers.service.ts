@@ -136,6 +136,11 @@ export function createDriverService(prisma: PrismaClient): DriverService {
         }
 
         const existing = await tx.driverProfile.findUnique({ where: { userId } });
+        // Moderation sanctions are final here: a resubmission would reset them
+        // to 'pending' and launder the suspension / block.
+        if (existing && ['suspended', 'blocked'].includes(existing.verificationStatus)) {
+          throw Errors.verificationLocked({ current_status: existing.verificationStatus });
+        }
         // Can't submit while already verified/pending (re-submit allowed after reject).
         if (existing && ['pending', 'verified'].includes(existing.verificationStatus)) {
           throw Errors.conflict('Заявка уже в работе либо одобрена', {

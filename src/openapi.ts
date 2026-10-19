@@ -1430,9 +1430,15 @@ export const openapiDocument = {
     '/bookings/incoming': {
       get: {
         tags: ['Bookings'],
-        summary: 'Driver\'s pending incoming requests',
+        summary: 'Driver\'s incoming requests (pending by default)',
         parameters: [
           { name: 'tripId', in: 'query', schema: { type: 'string', format: 'uuid' } },
+          {
+            name: 'status',
+            in: 'query',
+            description: 'pending = pending+viewed (default), accepted, all = both',
+            schema: { type: 'string', enum: ['pending', 'accepted', 'all'], default: 'pending' },
+          },
           { name: 'cursor', in: 'query', schema: { type: 'string', format: 'uuid' } },
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } },
         ],

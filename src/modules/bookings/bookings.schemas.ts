@@ -41,8 +41,13 @@ export type MyBookingsInput = z.infer<typeof MyBookingsQuery>;
 
 export const IncomingBookingsQuery = z.object({
   tripId: z.string().uuid().optional(),
+  // pending = awaiting a decision (pending + viewed, the default); accepted =
+  // confirmed passengers; all = both.
+  status: z.enum(['pending', 'accepted', 'all']).default('pending'),
   cursor: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });
 
-export type IncomingBookingsInput = z.infer<typeof IncomingBookingsQuery>;
+type IncomingParsed = z.infer<typeof IncomingBookingsQuery>;
+// status is optional for in-process callers (the bot) — defaults to 'pending'.
+export type IncomingBookingsInput = Omit<IncomingParsed, 'status'> & { status?: IncomingParsed['status'] };

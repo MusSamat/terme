@@ -18,6 +18,7 @@ export const ErrorCode = {
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
   WHATSAPP_WINDOW_EXPIRED: 'WHATSAPP_WINDOW_EXPIRED',
+  VERIFICATION_LOCKED: 'VERIFICATION_LOCKED',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -39,6 +40,7 @@ const HTTP_STATUS: Record<ErrorCodeValue, number> = {
   INTERNAL_ERROR: 500,
   SERVICE_UNAVAILABLE: 503,
   WHATSAPP_WINDOW_EXPIRED: 409,
+  VERIFICATION_LOCKED: 403,
 };
 
 export class AppError extends Error {
@@ -91,4 +93,6 @@ export const Errors = {
   serviceUnavailable: (msg = 'Service unavailable') => new AppError('SERVICE_UNAVAILABLE', msg),
   whatsappWindowExpired: (details?: Record<string, unknown>) =>
     new AppError('WHATSAPP_WINDOW_EXPIRED', '24-hour window expired, a template message is required', details),
+  verificationLocked: (details?: Record<string, unknown>) =>
+    new AppError('VERIFICATION_LOCKED', 'Driver verification is locked by moderation', details),
 } as const;
