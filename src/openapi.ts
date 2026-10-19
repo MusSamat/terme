@@ -89,6 +89,7 @@ export const openapiDocument = {
                   'INTERNAL_ERROR',
                   'SERVICE_UNAVAILABLE',
                   'OTP_BUDGET_EXCEEDED',
+                  'CONTACT_LIMIT',
                 ],
               },
               message: { type: 'string' },

@@ -7,10 +7,23 @@ import { createUser, createVerifiedDriver, createTrip, seedLaunchCities } from '
 
 // Phone reveal («Позвонить») — POST /v1/trips/:id/contact and
 // /v1/passenger-requests/:id/contact. Call-first (no booking needed), audited,
-// and daily-limited (DAILY_REVEAL_LIMIT = 30) to stop scrapers. Covers the
+// and daily-limited (CONTACT_DAILY_CAP distinct people, lower for new accounts). Covers the
 // happy path, self-reveal guard, not-found, and the anti-scrape rate limit.
 
 let app: Express;
+
+/** Older than CONTACT_NEW_ACCOUNT_DAYS with a completed trip → the full cap. */
+async function makeEstablished(userId: string): Promise<void> {
+  await testPrisma.user.update({
+    where: { id: userId },
+    data: { createdAt: new Date(Date.now() - 30 * 24 * 60 * 60_000) },
+  });
+  const d = await createVerifiedDriver(testPrisma, { plate: `EST${Math.floor(Math.random() * 1e6)}` });
+  const t = await createTrip(testPrisma, d.id);
+  await testPrisma.booking.create({
+    data: { tripId: t.id, passengerId: userId, seatsCount: 1, status: 'completed' },
+  });
+}
 beforeEach(async () => {
   app = createApp(testPrisma);
   await seedLaunchCities(testPrisma);
@@ -50,26 +63,70 @@ describe('POST /v1/trips/:id/contact — reveal driver phone', () => {
     expect(res.status).toBe(404);
   });
 
-  it('enforces the daily reveal limit (429 after 30 reveals)', async () => {
+  it('caps DISTINCT people per day (429 CONTACT_LIMIT); re-revealing a known one stays free', async () => {
     const driver = await createVerifiedDriver(testPrisma, { plate: 'C3' });
     const trip = await createTrip(testPrisma, driver.id);
     const viewer = await createUser(testPrisma);
+    await makeEstablished(viewer.id);
 
-    // Pre-seed 30 reveals in the last 24h → the next one trips the limit.
+    // 30 distinct people already revealed today, one of them this driver.
+    const others = await Promise.all(Array.from({ length: 29 }, () => createUser(testPrisma)));
     await testPrisma.contactReveal.createMany({
-      data: Array.from({ length: 30 }, () => ({
+      data: [driver.id, ...others.map((o) => o.id)].map((targetUserId) => ({
         viewerId: viewer.id,
-        targetUserId: driver.id,
+        targetUserId,
         contextType: 'trip',
         contextId: trip.id,
       })),
     });
+    const again = await request(app)
+      .post(`/v1/trips/${trip.id}/contact`)
+      .set('Authorization', `Bearer ${viewer.accessToken}`);
+    expect(again.status).toBe(200);
 
+    const driver2 = await createVerifiedDriver(testPrisma, { plate: 'C3B' });
+    const trip2 = await createTrip(testPrisma, driver2.id);
+    const res = await request(app)
+      .post(`/v1/trips/${trip2.id}/contact`)
+      .set('Authorization', `Bearer ${viewer.accessToken}`);
+    expect(res.status).toBe(429);
+    expect(res.body.error.code).toBe('CONTACT_LIMIT');
+    expect(res.body.error.details.reason).toBe('contact_reveal_daily_limit');
+  });
+
+  it('new accounts get the lower cap (10 distinct people)', async () => {
+    const viewer = await createUser(testPrisma); // created now → "new"
+    const targets = await Promise.all(Array.from({ length: 10 }, () => createUser(testPrisma)));
+    const driver = await createVerifiedDriver(testPrisma, { plate: 'C3C' });
+    const trip = await createTrip(testPrisma, driver.id);
+    await testPrisma.contactReveal.createMany({
+      data: targets.map((t) => ({
+        viewerId: viewer.id,
+        targetUserId: t.id,
+        contextType: 'trip',
+        contextId: trip.id,
+      })),
+    });
     const res = await request(app)
       .post(`/v1/trips/${trip.id}/contact`)
       .set('Authorization', `Bearer ${viewer.accessToken}`);
     expect(res.status).toBe(429);
-    expect(res.body.error.details.reason).toBe('contact_reveal_daily_limit');
+    expect(res.body.error.details.limit).toBe(10);
+  });
+
+  it('parallel reveals cannot slip past the cap (advisory lock)', async () => {
+    const viewer = await createUser(testPrisma);
+    const drivers = await Promise.all(
+      Array.from({ length: 15 }, (_, i) => createVerifiedDriver(testPrisma, { plate: `CP${i}` })),
+    );
+    const trips = await Promise.all(drivers.map((d) => createTrip(testPrisma, d.id)));
+    const results = await Promise.all(
+      trips.map((t) =>
+        request(app).post(`/v1/trips/${t.id}/contact`).set('Authorization', `Bearer ${viewer.accessToken}`),
+      ),
+    );
+    expect(results.filter((r) => r.status === 200)).toHaveLength(10);
+    expect(results.filter((r) => r.status === 429)).toHaveLength(5);
   });
 
   it('requires authentication (401)', async () => {

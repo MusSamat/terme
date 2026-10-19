@@ -16,7 +16,7 @@ import {
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { optionalAuth, requireAuth } from '@/middleware/auth.js';
-import { requestCreateLimit } from '@/middleware/rateLimit.js';
+import { contactIpLimit, requestCreateLimit } from '@/middleware/rateLimit.js';
 
 export function createPassengerRequestsRouter(prisma: PrismaClient, notifier: Notifier): Router {
   const router = Router();
@@ -52,6 +52,7 @@ export function createPassengerRequestsRouter(prisma: PrismaClient, notifier: No
   // («Позвонить»). Auth-gated + audited + daily-limited.
   router.post(
     '/:id/contact',
+    contactIpLimit,
     requireAuth,
     validate({ params: RequestIdParam }),
     asyncHandler(async (req, res) => {

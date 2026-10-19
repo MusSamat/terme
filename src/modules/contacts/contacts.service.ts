@@ -1,40 +1,67 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
+import { env } from '@/config/env.js';
 import { Errors, publicPhone } from '@/lib/errors.js';
 
 /**
  * Phone reveal («Позвонить») — call-first marketplace flow. A logged-in user
  * taps the button and gets the counterparty's phone immediately, no booking
- * required. Every reveal is audited in contact_reveals; a daily distinct-
- * context limit stops scrapers cold while never bothering real users.
+ * required. Every reveal is audited in contact_reveals; a daily cap on the
+ * number of DISTINCT people revealed stops scrapers while never bothering real
+ * users (re-revealing someone already shown today is free).
  */
-
-const DAILY_REVEAL_LIMIT = 30;
 
 export interface RevealedContact {
   phone: string;
   name: string;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export function createContactsService(prisma: PrismaClient) {
-  async function assertUnderDailyLimit(viewerId: string): Promise<void> {
-    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const used = await prisma.contactReveal.count({
-      where: { viewerId, createdAt: { gte: dayAgo } },
+  // New (young or never travelled) accounts get the lower cap — fresh
+  // throwaway accounts are the harvesting vector.
+  async function dailyCap(tx: Prisma.TransactionClient, viewerId: string): Promise<number> {
+    const viewer = await tx.user.findUnique({ where: { id: viewerId }, select: { createdAt: true } });
+    const young =
+      !viewer || Date.now() - viewer.createdAt.getTime() < env.CONTACT_NEW_ACCOUNT_DAYS * DAY_MS;
+    if (young) return env.CONTACT_NEW_ACCOUNT_DAILY_CAP;
+    const travelled = await tx.booking.findFirst({
+      where: {
+        status: 'completed',
+        OR: [{ passengerId: viewerId }, { trip: { driverId: viewerId } }],
+      },
+      select: { id: true },
     });
-    if (used >= DAILY_REVEAL_LIMIT) {
-      throw Errors.rateLimited({ reason: 'contact_reveal_daily_limit' });
-    }
+    return travelled ? env.CONTACT_DAILY_CAP : env.CONTACT_NEW_ACCOUNT_DAILY_CAP;
   }
 
-  async function audit(
+  // M4: check + insert under a per-viewer advisory lock so parallel taps can't
+  // all slip under the cap (it used to be check-then-insert).
+  async function auditWithinLimit(
     viewerId: string,
     targetUserId: string,
     contextType: 'trip' | 'passenger_request',
     contextId: string,
   ): Promise<void> {
-    // Early stage: EVERY tap is a row — repeat reveals inflate the owner's
-    // counter deliberately. The daily limit still counts rows (anti-scrape).
-    await prisma.contactReveal.create({ data: { viewerId, targetUserId, contextType, contextId } });
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${viewerId}))`;
+      const since = new Date(Date.now() - DAY_MS);
+      const seen = await tx.contactReveal.findMany({
+        where: { viewerId, createdAt: { gte: since } },
+        distinct: ['targetUserId'],
+        select: { targetUserId: true },
+      });
+      const alreadyRevealed = seen.some((r) => r.targetUserId === targetUserId);
+      if (!alreadyRevealed) {
+        const cap = await dailyCap(tx, viewerId);
+        if (seen.length >= cap) {
+          throw Errors.contactLimit({ reason: 'contact_reveal_daily_limit', limit: cap });
+        }
+      }
+      // Early stage: EVERY tap is a row — repeat reveals inflate the owner's
+      // counter deliberately (only distinct people count toward the cap).
+      await tx.contactReveal.create({ data: { viewerId, targetUserId, contextType, contextId } });
+    });
   }
 
   /** Driver's phone for an active trip. */
@@ -55,8 +82,7 @@ export function createContactsService(prisma: PrismaClient) {
     const phone = publicPhone(trip.driver.phone);
     if (!phone) throw Errors.conflict('User has no public phone', { reason: 'no_phone' });
 
-    await assertUnderDailyLimit(viewerId);
-    await audit(viewerId, trip.driverId, 'trip', tripId);
+    await auditWithinLimit(viewerId, trip.driverId, 'trip', tripId);
     return { phone, name: trip.driver.name };
   }
 
@@ -79,8 +105,7 @@ export function createContactsService(prisma: PrismaClient) {
     const phone = publicPhone(request.passenger.phone);
     if (!phone) throw Errors.conflict('User has no public phone', { reason: 'no_phone' });
 
-    await assertUnderDailyLimit(viewerId);
-    await audit(viewerId, request.passengerId, 'passenger_request', requestId);
+    await auditWithinLimit(viewerId, request.passengerId, 'passenger_request', requestId);
     return { phone, name: request.passenger.name };
   }
 

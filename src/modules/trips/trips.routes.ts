@@ -19,7 +19,7 @@ import {
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { optionalAuth, requireAuth } from '@/middleware/auth.js';
-import { tripCreateLimit } from '@/middleware/rateLimit.js';
+import { contactIpLimit, tripCreateLimit } from '@/middleware/rateLimit.js';
 import { Errors } from '@/lib/errors.js';
 
 export function createTripsRouter(prisma: PrismaClient, notifier?: Notifier): Router {
@@ -92,6 +92,7 @@ export function createTripsRouter(prisma: PrismaClient, notifier?: Notifier): Ro
   // Auth-gated + audited + daily-limited; see contacts.service.
   router.post(
     '/:id/contact',
+    contactIpLimit,
     requireAuth,
     validate({ params: TripIdParam }),
     asyncHandler(async (req, res) => {

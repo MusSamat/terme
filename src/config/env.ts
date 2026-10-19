@@ -101,6 +101,13 @@ const EnvSchema = z.object({
   // M6: admin refresh token lifetime (stateless JWT + admins.token_epoch).
   ADMIN_REFRESH_TTL_HOURS: z.coerce.number().int().positive().default(12),
 
+  // M4: phone reveals («Позвонить») — DISTINCT people per rolling 24h. New
+  // accounts (younger than CONTACT_NEW_ACCOUNT_DAYS or without any completed
+  // trip) get the lower cap.
+  CONTACT_DAILY_CAP: z.coerce.number().int().positive().default(30),
+  CONTACT_NEW_ACCOUNT_DAILY_CAP: z.coerce.number().int().positive().default(10),
+  CONTACT_NEW_ACCOUNT_DAYS: z.coerce.number().int().nonnegative().default(3),
+
   SUPERADMIN_EMAIL: z.string().email().default(DEFAULT_SUPERADMIN_EMAIL),
   // H3: production refuses to boot with it unset, default or <16 chars.
   SUPERADMIN_TEMP_PASSWORD: z.string().min(8).default(DEFAULT_SUPERADMIN_TEMP_PASSWORD),

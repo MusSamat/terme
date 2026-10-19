@@ -20,6 +20,7 @@ export const ErrorCode = {
   WHATSAPP_WINDOW_EXPIRED: 'WHATSAPP_WINDOW_EXPIRED',
   VERIFICATION_LOCKED: 'VERIFICATION_LOCKED',
   OTP_BUDGET_EXCEEDED: 'OTP_BUDGET_EXCEEDED',
+  CONTACT_LIMIT: 'CONTACT_LIMIT',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -43,6 +44,7 @@ const HTTP_STATUS: Record<ErrorCodeValue, number> = {
   WHATSAPP_WINDOW_EXPIRED: 409,
   VERIFICATION_LOCKED: 403,
   OTP_BUDGET_EXCEEDED: 503,
+  CONTACT_LIMIT: 429,
 };
 
 export class AppError extends Error {
@@ -99,4 +101,6 @@ export const Errors = {
     new AppError('VERIFICATION_LOCKED', 'Driver verification is locked by moderation', details),
   otpBudgetExceeded: (details?: Record<string, unknown>) =>
     new AppError('OTP_BUDGET_EXCEEDED', 'OTP sending is temporarily paused', details),
+  contactLimit: (details?: Record<string, unknown>) =>
+    new AppError('CONTACT_LIMIT', 'Daily phone reveal limit reached', details),
 } as const;

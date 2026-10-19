@@ -175,3 +175,10 @@ export const bookingCreateLimit = build({
   keyGenerator: userKey,
   skipFailedRequests: true,
 });
+
+/** M4: per-IP cap on phone reveals (the per-user cap lives in contacts.service). */
+export const contactIpLimit = build({
+  name: 'contact_ip',
+  windowMs: 60 * 60_000,
+  limit: 100,
+});
