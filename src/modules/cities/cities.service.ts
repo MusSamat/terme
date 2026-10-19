@@ -56,6 +56,9 @@ export interface PopularRoute {
   to: string;
   fromId: number;
   toId: number;
+  // Kyrgyz names (from/to are Russian).
+  fromKg: string;
+  toKg: string;
   tripCount: number;
   minPrice: number | null;
 }
@@ -64,7 +67,14 @@ export interface PopularRoute {
 const POPULAR_CACHE_MS = Number(process.env.POPULAR_ROUTES_CACHE_MS ?? 30_000);
 
 export function createCitiesService(prisma: PrismaClient) {
-  let routeIds: Array<{ from: string; to: string; fromId: number; toId: number }> | null = null;
+  let routeIds: Array<{
+    from: string;
+    to: string;
+    fromId: number;
+    toId: number;
+    fromKg: string;
+    toKg: string;
+  }> | null = null;
   let popularCache: { value: PopularRoute[]; at: number } | null = null;
 
   /**
@@ -145,8 +155,24 @@ export function createCitiesService(prisma: PrismaClient) {
           toId: await resolvePlaceByName(prisma, to),
         })),
       );
+      const ids = resolved.flatMap((r) => [r.fromId, r.toId]).filter((x): x is number => x !== null);
+      const kg = new Map(
+        (await prisma.city.findMany({ where: { id: { in: ids } }, select: { id: true, nameKg: true } })).map(
+          (c) => [c.id, c.nameKg],
+        ),
+      );
       routeIds = resolved.flatMap((r) =>
-        r.fromId !== null && r.toId !== null ? [{ ...r, fromId: r.fromId, toId: r.toId }] : [],
+        r.fromId !== null && r.toId !== null
+          ? [
+              {
+                ...r,
+                fromId: r.fromId,
+                toId: r.toId,
+                fromKg: kg.get(r.fromId) ?? r.from,
+                toKg: kg.get(r.toId) ?? r.to,
+              },
+            ]
+          : [],
       );
     }
     if (routeIds.length === 0) return [];

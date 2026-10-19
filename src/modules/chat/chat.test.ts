@@ -205,3 +205,21 @@ describe('PATCH /v1/messages/:id/read', () => {
     expect(res.body.isRead).toBe(false);
   });
 });
+
+describe('PATCH /v1/chats/:booking_id/read-all', () => {
+  it('marks every unread incoming message and emits chat:read per message to the sender', async () => {
+    const ctx = await setupAcceptedBooking();
+    for (const text of ['one', 'two']) {
+      await request(app)
+        .post(`/v1/chats/${ctx.bookingId}/messages`)
+        .set('Authorization', `Bearer ${ctx.passenger.accessToken}`)
+        .send({ text });
+    }
+    const res = await request(app)
+      .patch(`/v1/chats/${ctx.bookingId}/read-all`)
+      .set('Authorization', `Bearer ${ctx.driver.accessToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(2);
+    expect(notifier.findForUser(ctx.passenger.id, 'chat:read')).toHaveLength(2);
+  });
+});

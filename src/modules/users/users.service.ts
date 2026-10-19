@@ -27,6 +27,7 @@ export interface PublicUser {
   rating: number | null;
   ratingCount: number;
   loyaltyTier: string;
+  bio: string | null;
   createdAt: Date;
   // Only present for verified drivers — undefined for passengers
   driverCar: DriverCarPublic | null;
@@ -232,6 +233,7 @@ export function createUsersService(prisma: PrismaClient): UsersService {
       rating: user.ratingCount >= 3 ? Number(user.rating) : null,
       ratingCount: user.ratingCount,
       loyaltyTier: user.loyaltyTier,
+      bio: user.bio,
       createdAt: user.createdAt,
       driverCar,
     };

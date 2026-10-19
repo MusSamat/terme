@@ -274,10 +274,20 @@ export function createChatService(prisma: PrismaClient, notifier: Notifier): Cha
     if (!isParticipant) throw Errors.forbidden({ reason: 'not_participant' });
 
     const now = new Date();
-    const { count } = await prisma.message.updateMany({
+    const unread = await prisma.message.findMany({
       where: { bookingId, senderId: { not: userId }, isRead: false },
+      select: { id: true, senderId: true },
+    });
+    if (unread.length === 0) return 0;
+    const { count } = await prisma.message.updateMany({
+      where: { id: { in: unread.map((m) => m.id) }, isRead: false },
       data: { isRead: true, readAt: now },
     });
+    // Same chat:read event as the single-message read, so the sender's ticks
+    // update live. Socket-only (no notification rows) — cheap per message.
+    await Promise.all(
+      unread.map((m) => notifier.messageRead(m.senderId, { messageId: m.id, readAt: now })),
+    );
     return count;
   }
 

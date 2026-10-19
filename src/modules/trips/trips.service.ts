@@ -127,6 +127,11 @@ export interface TripCardItem {
   distanceKm?: number;
 }
 
+// Owner list (GET /trips/my): + the driver's own comment.
+export interface MyTripItem extends TripListItem {
+  comment: string | null;
+}
+
 export interface TripDetail extends TripListItem {
   comment: string | null;
   // The viewer's own active booking on this trip (guards double-booking in UI).
@@ -161,7 +166,7 @@ export interface TripsService {
   myTrips(
     driverUserId: string,
     query: MyTripsInput,
-  ): Promise<{ data: TripListItem[]; nextCursor: string | null }>;
+  ): Promise<{ data: MyTripItem[]; nextCursor: string | null }>;
   like(id: string, userId: string): Promise<{ liked: boolean }>;
   unlike(id: string, userId: string): Promise<{ liked: boolean }>;
   recordView(id: string, viewer: { userId: string | null; anonId: string | null }): Promise<void>;
@@ -815,7 +820,7 @@ export function createTripsService(
   async function myTrips(
     driverUserId: string,
     query: MyTripsInput,
-  ): Promise<{ data: TripListItem[]; nextCursor: string | null }> {
+  ): Promise<{ data: MyTripItem[]; nextCursor: string | null }> {
     const now = new Date();
     const where: Prisma.TripWhereInput = { driverId: driverUserId };
     let orderBy: Prisma.TripOrderByWithRelationInput;
@@ -859,9 +864,10 @@ export function createTripsService(
     });
     const revealMap = new Map(reveals.map((c) => [c.contextId, c._count._all]));
     return sliceAndNext(
-      rows.map((r) =>
-        toListItem(r, { liked: likedSet.has(r.id), contacts: revealMap.get(r.id) ?? 0 }),
-      ),
+      rows.map((r) => ({
+        ...toListItem(r, { liked: likedSet.has(r.id), contacts: revealMap.get(r.id) ?? 0 }),
+        comment: r.comment,
+      })),
       query.limit,
     );
   }

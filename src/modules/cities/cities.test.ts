@@ -56,6 +56,18 @@ describe('GET /v1/cities — SOATE directory autocomplete', () => {
   });
 });
 
+describe('GET /v1/cities/popular-routes', () => {
+  it('carries Kyrgyz names next to the Russian ones', async () => {
+    const res = await request(app).get('/v1/cities/popular-routes');
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+    for (const r of res.body.data) {
+      expect(typeof r.fromKg).toBe('string');
+      expect(typeof r.toKg).toBe('string');
+    }
+  });
+});
+
 describe('GET /v1/cities/nearest', () => {
   it('maps a GPS point to the settlement it is in', async () => {
     const res = await request(app).get('/v1/cities/nearest?lat=42.874&lng=74.612');

@@ -108,6 +108,7 @@ describe('GET /v1/users/:id (public)', () => {
     expect(res.body.id).toBe(target.id);
     expect(res.body.name).toBe('Target');
     expect(res.body.phone).toBeUndefined();
+    expect(res.body).toHaveProperty('bio');
   });
 
   it('404 for soft-deleted user', async () => {

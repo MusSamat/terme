@@ -801,6 +801,7 @@ describe('GET /v1/trips/my (driver tabs)', () => {
       .get('/v1/trips/my?tab=active')
       .set('Authorization', `Bearer ${d.accessToken}`);
     expect(active.body.data).toHaveLength(1);
+    expect(active.body.data[0]).toHaveProperty('comment');
 
     const past = await request(app)
       .get('/v1/trips/my?tab=past')

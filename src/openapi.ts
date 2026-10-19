@@ -142,6 +142,7 @@ export const openapiDocument = {
           roles: { type: 'array', items: { type: 'string' } },
           rating: { type: 'number', nullable: true },
           ratingCount: { type: 'integer' },
+          bio: { type: 'string', nullable: true },
           createdAt: { type: 'string', format: 'date-time' },
         },
       },
@@ -1286,7 +1287,31 @@ export const openapiDocument = {
           { name: 'cursor', in: 'query', schema: { type: 'string', format: 'uuid' } },
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50 } },
         ],
-        responses: { '200': { description: 'OK' }, ...errorResponses },
+        responses: {
+          '200': {
+            description: 'OK — { data: (TripListItem + comment)[], nextCursor }',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    data: {
+                      type: 'array',
+                      items: {
+                        allOf: [
+                          { $ref: '#/components/schemas/TripListItem' },
+                          { type: 'object', properties: { comment: { type: 'string', nullable: true } } },
+                        ],
+                      },
+                    },
+                    nextCursor: { type: 'string', nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          ...errorResponses,
+        },
       },
     },
     '/trips/{id}': {
