@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { PrismaClient } from '@prisma/client';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { validate } from '@/middleware/validate.js';
+import { publicReadLimit } from '@/middleware/rateLimit.js';
 import { MapQuery, type MapQueryInput } from '@/modules/cities/cities.schemas.js';
 import { createMapService } from './map.service.js';
 
@@ -12,6 +13,7 @@ export function createMapRouter(prisma: PrismaClient): Router {
 
   router.get(
     '/',
+    publicReadLimit,
     validate({ query: MapQuery }),
     asyncHandler(async (req, res) => {
       res.json(await service.listings(req.query as unknown as MapQueryInput));

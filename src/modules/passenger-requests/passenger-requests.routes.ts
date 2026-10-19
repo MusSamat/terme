@@ -16,7 +16,12 @@ import {
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { optionalAuth, requireAuth } from '@/middleware/auth.js';
-import { contactIpLimit, requestCreateLimit } from '@/middleware/rateLimit.js';
+import {
+  contactIpLimit,
+  publicReadLimit,
+  requestCreateLimit,
+  viewIpLimit,
+} from '@/middleware/rateLimit.js';
 
 export function createPassengerRequestsRouter(prisma: PrismaClient, notifier: Notifier): Router {
   const router = Router();
@@ -28,6 +33,7 @@ export function createPassengerRequestsRouter(prisma: PrismaClient, notifier: No
   router.get(
     '/',
     optionalAuth,
+    publicReadLimit,
     validate({ query: ListRequestsQuery }),
     asyncHandler(async (req, res) => {
       const result = await service.list(
@@ -78,6 +84,7 @@ export function createPassengerRequestsRouter(prisma: PrismaClient, notifier: No
   router.get(
     '/:id',
     optionalAuth,
+    publicReadLimit,
     validate({ params: RequestIdParam }),
     asyncHandler(async (req, res) => {
       const result = await service.getById(req.params.id!, req.user?.id ?? null);
@@ -107,6 +114,7 @@ export function createPassengerRequestsRouter(prisma: PrismaClient, notifier: No
   // Record a unique view on detail open (public: authed → by user, anon → by anonId).
   router.post(
     '/:id/view',
+    viewIpLimit,
     optionalAuth,
     validate({ params: RequestIdParam, body: z.object({ anonId: z.string().uuid().optional() }) }),
     asyncHandler(async (req, res) => {

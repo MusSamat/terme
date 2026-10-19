@@ -11,6 +11,7 @@ import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { requireAuth } from '@/middleware/auth.js';
 import type { Notifier } from '@/lib/notifier.js';
+import { chatSendLimit } from '@/middleware/rateLimit.js';
 
 export function createChatsRouter(prisma: PrismaClient, notifier: Notifier): Router {
   const router = Router();
@@ -60,6 +61,7 @@ export function createChatsRouter(prisma: PrismaClient, notifier: Notifier): Rou
   router.post(
     '/:booking_id/messages',
     requireAuth,
+    chatSendLimit,
     validate({ params: BookingIdParam, body: SendMessageBody }),
     asyncHandler(async (req, res) => {
       const { text, clientMsgId } = req.body as { text: string; clientMsgId?: string };

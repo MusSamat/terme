@@ -19,7 +19,12 @@ import {
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { optionalAuth, requireAuth } from '@/middleware/auth.js';
-import { contactIpLimit, tripCreateLimit } from '@/middleware/rateLimit.js';
+import {
+  contactIpLimit,
+  publicReadLimit,
+  tripCreateLimit,
+  viewIpLimit,
+} from '@/middleware/rateLimit.js';
 import { Errors } from '@/lib/errors.js';
 
 export function createTripsRouter(prisma: PrismaClient, notifier?: Notifier): Router {
@@ -30,6 +35,7 @@ export function createTripsRouter(prisma: PrismaClient, notifier?: Notifier): Ro
   router.get(
     '/',
     optionalAuth,
+    publicReadLimit,
     validate({ query: TripSearchQuery }),
     asyncHandler(async (req, res) => {
       const result = await service.search(
@@ -116,6 +122,7 @@ export function createTripsRouter(prisma: PrismaClient, notifier?: Notifier): Ro
   router.get(
     '/:id',
     optionalAuth,
+    publicReadLimit,
     validate({ params: TripIdParam }),
     asyncHandler(async (req, res) => {
       const trip = await service.getById(req.params.id!, req.user?.id ?? null);
@@ -146,6 +153,7 @@ export function createTripsRouter(prisma: PrismaClient, notifier?: Notifier): Ro
   // authenticated → counted by user; anonymous → counted by client anonId.
   router.post(
     '/:id/view',
+    viewIpLimit,
     optionalAuth,
     validate({ params: TripIdParam, body: z.object({ anonId: z.string().uuid().optional() }) }),
     asyncHandler(async (req, res) => {

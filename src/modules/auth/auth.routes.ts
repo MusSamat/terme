@@ -23,6 +23,7 @@ import { requireAdmin, requireAuth } from '@/middleware/auth.js';
 import {
   adminLoginLimit,
   authLimit,
+  checkPhoneDailyLimit,
   sendOtpLimits,
   verifyOtpLimit,
 } from '@/middleware/rateLimit.js';
@@ -46,6 +47,7 @@ export function createAuthRouter(prisma: PrismaClient, notifier: Notifier): Rout
   router.post(
     '/check-phone',
     authLimit,
+    checkPhoneDailyLimit,
     validate({ body: CheckPhoneBody }),
     asyncHandler(async (req, res) => {
       const { phone } = req.body as { phone: string };

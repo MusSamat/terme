@@ -6,7 +6,12 @@ import { LikesQuery, RatingsQuery, UpdateMeBody, UserIdParam } from './users.sch
 import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { requireAuth } from '@/middleware/auth.js';
-import { sendOtpLimits } from '@/middleware/rateLimit.js';
+import {
+  accountDataLimit,
+  publicReadLimit,
+  sendOtpLimits,
+  uploadLimit,
+} from '@/middleware/rateLimit.js';
 import { uploadMemory } from '@/lib/uploads.js';
 import { webRefreshCookie } from '@/lib/cookies.js';
 import { Errors } from '@/lib/errors.js';
@@ -52,6 +57,7 @@ export function createUsersRouter(prisma: PrismaClient, notifier: Notifier): Rou
   router.delete(
     '/me',
     requireAuth,
+    accountDataLimit,
     asyncHandler(async (req, res) => {
       await service.deleteSelf(req.user!.id);
       await notifier.disconnectUser(req.user!.id);
@@ -63,6 +69,7 @@ export function createUsersRouter(prisma: PrismaClient, notifier: Notifier): Rou
   router.get(
     '/me/export',
     requireAuth,
+    accountDataLimit,
     asyncHandler(async (req, res) => {
       const dump = await service.exportData(req.user!.id);
       res
@@ -92,6 +99,7 @@ export function createUsersRouter(prisma: PrismaClient, notifier: Notifier): Rou
 
   router.get(
     '/:id',
+    publicReadLimit,
     validate({ params: UserIdParam }),
     asyncHandler(async (req, res) => {
       const profile = await service.getPublicProfile(req.params.id!);
@@ -101,6 +109,7 @@ export function createUsersRouter(prisma: PrismaClient, notifier: Notifier): Rou
 
   router.get(
     '/:id/ratings',
+    publicReadLimit,
     validate({ params: UserIdParam, query: RatingsQuery }),
     asyncHandler(async (req, res) => {
       const { limit, cursor } = req.query as unknown as {
@@ -115,6 +124,7 @@ export function createUsersRouter(prisma: PrismaClient, notifier: Notifier): Rou
   router.post(
     '/avatar',
     requireAuth,
+    uploadLimit,
     uploadMemory.single('avatar'),
     asyncHandler(async (req, res) => {
       if (!req.file) throw Errors.validation({ reason: 'missing_file', field: 'avatar' });

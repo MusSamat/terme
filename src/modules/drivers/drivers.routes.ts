@@ -6,6 +6,7 @@ import { validate } from '@/middleware/validate.js';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { requireAuth, requireRole } from '@/middleware/auth.js';
 import { uploadMemory } from '@/lib/uploads.js';
+import { uploadLimit } from '@/middleware/rateLimit.js';
 import { Errors } from '@/lib/errors.js';
 
 const REQUIRED_PHOTO_FIELDS = ['license', 'license_back', 'car_passport', 'car_passport_back', 'car_photo', 'selfie'] as const;
@@ -18,6 +19,7 @@ export function createDriversRouter(prisma: PrismaClient): Router {
   router.post(
     '/verification',
     requireAuth,
+    uploadLimit,
     uploadMemory.fields([
       { name: 'license', maxCount: 1 },
       { name: 'license_back', maxCount: 1 },
@@ -61,6 +63,7 @@ export function createDriversRouter(prisma: PrismaClient): Router {
   router.post(
     '/verification/upload',
     requireAuth,
+    uploadLimit,
     uploadMemory.single('file'),
     validate({ query: DriverReuploadQuery }),
     asyncHandler(async (req, res) => {
@@ -77,6 +80,7 @@ export function createDriversRouter(prisma: PrismaClient): Router {
     '/car-photo',
     requireAuth,
     requireRole('driver'),
+    uploadLimit,
     uploadMemory.single('file'),
     asyncHandler(async (req, res) => {
       if (!req.file) throw Errors.validation({ reason: 'missing_file', field: 'file' });

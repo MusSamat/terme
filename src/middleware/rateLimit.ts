@@ -182,3 +182,55 @@ export const contactIpLimit = build({
   windowMs: 60 * 60_000,
   limit: 100,
 });
+
+// ─── Read / misc write paths ──────────────────────────────────────────
+
+/** M7: REST chat send — same budget as the socket (20/min per user). */
+export const chatSendLimit = build({
+  name: 'chat_send',
+  windowMs: 60_000,
+  limit: 20,
+  keyGenerator: userKey,
+});
+
+/** M7: all multipart uploads (avatar, verification, car photo) per user. */
+export const uploadLimit = build({
+  name: 'upload',
+  windowMs: 60 * 60_000,
+  limit: 30,
+  keyGenerator: userKey,
+});
+
+/** Data export / account delete — rare, expensive, per user. */
+export const accountDataLimit = build({
+  name: 'account_data',
+  windowMs: 60 * 60_000,
+  limit: 5,
+  keyGenerator: userKey,
+});
+
+/** M9: check-phone answers «does this number have an account» — daily per IP. */
+export const checkPhoneDailyLimit = build({
+  name: 'check_phone_day',
+  windowMs: 24 * 60 * 60_000,
+  limit: () => env.CHECK_PHONE_IP_DAILY_CAP,
+});
+
+/** Anonymous view-counter inflation brake (POST /…/:id/view) per IP. */
+export const viewIpLimit = build({
+  name: 'view_ip',
+  windowMs: 60_000,
+  limit: 60,
+});
+
+/**
+ * Public reads (search, lists, profiles, map, city search): generous for
+ * humans, stops scrapers. Per user when authenticated (mount after
+ * optionalAuth), per IP otherwise.
+ */
+export const publicReadLimit = build({
+  name: 'public_read',
+  windowMs: 60_000,
+  limit: (req: Request) => (req.user ? env.PUBLIC_READ_USER_PER_MIN : env.PUBLIC_READ_IP_PER_MIN),
+  keyGenerator: (req: Request) => (req.user ? `u:${req.user.id}` : `ip:${ipKey(req)}`),
+});

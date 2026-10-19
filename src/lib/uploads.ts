@@ -139,7 +139,8 @@ const fileFilter = (_req: Request, file: Express.Multer.File, cb: FileFilterCall
 // no partially-persisted payload if a malicious upload sneaks past the MIME check.
 export const uploadMemory = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_BYTES, files: 10 },
+  // M7: bound the non-file parts too (field count, part count, field size).
+  limits: { fileSize: MAX_BYTES, files: 10, fields: 30, parts: 40, fieldSize: 64 * 1024 },
   fileFilter,
 });
 

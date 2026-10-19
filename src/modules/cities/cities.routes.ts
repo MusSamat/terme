@@ -3,6 +3,7 @@ import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/errorHandler.js';
 import { validate } from '@/middleware/validate.js';
+import { publicReadLimit } from '@/middleware/rateLimit.js';
 import { createCitiesService } from './cities.service.js';
 
 /**
@@ -65,6 +66,7 @@ export function createCitiesRouter(prisma: PrismaClient): Router {
 
   router.get(
     '/',
+    publicReadLimit,
     validate({ query: SearchQuery }),
     asyncHandler(async (req, res) => {
       const { q, limit } = req.query as unknown as { q?: string; limit: number };

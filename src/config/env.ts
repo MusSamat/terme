@@ -108,6 +108,13 @@ const EnvSchema = z.object({
   CONTACT_NEW_ACCOUNT_DAILY_CAP: z.coerce.number().int().positive().default(10),
   CONTACT_NEW_ACCOUNT_DAYS: z.coerce.number().int().nonnegative().default(3),
 
+  // Public read endpoints (search / lists / profiles / map / city search):
+  // per authenticated user, or per IP when anonymous (CGNAT → higher).
+  PUBLIC_READ_USER_PER_MIN: z.coerce.number().int().positive().default(120),
+  PUBLIC_READ_IP_PER_MIN: z.coerce.number().int().positive().default(240),
+  // M9: POST /auth/check-phone per IP per day (enumeration brake).
+  CHECK_PHONE_IP_DAILY_CAP: z.coerce.number().int().positive().default(200),
+
   SUPERADMIN_EMAIL: z.string().email().default(DEFAULT_SUPERADMIN_EMAIL),
   // H3: production refuses to boot with it unset, default or <16 chars.
   SUPERADMIN_TEMP_PASSWORD: z.string().min(8).default(DEFAULT_SUPERADMIN_TEMP_PASSWORD),
@@ -185,6 +192,9 @@ function parseEnv(): Env {
     const problems = [
       !data.TOTP_ENC_KEY && 'TOTP_ENC_KEY (32 bytes, base64) is required',
       superadminTempPasswordProblem(process.env.SUPERADMIN_TEMP_PASSWORD),
+      // M10: debug switches that leak OTPs / drop every limit.
+      data.OTP_DEBUG && 'OTP_DEBUG=true is forbidden in production',
+      data.RATE_LIMIT_DISABLED && 'RATE_LIMIT_DISABLED=true is forbidden in production',
     ].filter(Boolean);
     if (problems.length) {
       process.stderr.write(`\n✗ Unsafe production config:\n  • ${problems.join('\n  • ')}\n\n`);
